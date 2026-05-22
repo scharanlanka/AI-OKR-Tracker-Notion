@@ -1,0 +1,84 @@
+# -----------------------------
+# Secrets / environment files
+# -----------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets.*
+
+# -----------------------------
+# Python
+# -----------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+wheels/
+*.egg-info/
+.eggs/
+
+# -----------------------------
+# Virtual environments
+# -----------------------------
+.venv/
+venv/
+env/
+backend/.venv/
+frontend/.venv/
+
+# -----------------------------
+# Tooling / dependency locks
+# -----------------------------
+pip-wheel-metadata/
+
+# -----------------------------
+# Logs and runtime files
+# -----------------------------
+*.log
+logs/
+*.pid
+*.sqlite
+*.sqlite3
+
+# -----------------------------
+# Frontend / Streamlit
+# -----------------------------
+.streamlit/secrets.toml
+node_modules/
+
+# -----------------------------
+# OS / editor junk
+# -----------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# -----------------------------
+# Large generated files
+# -----------------------------
+*.parquet
+*.feather
+*.h5
+*.joblib
+*.pkl
+*.zip
+*.tar
+*.tar.gz

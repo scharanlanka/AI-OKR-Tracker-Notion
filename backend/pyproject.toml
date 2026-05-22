@@ -1,0 +1,16 @@
+[project]
+name = "okr-tracker-backend"
+version = "0.1.0"
+description = "Backend service for OKR Tracker"
+requires-python = ">=3.13"
+dependencies = [
+  "fastapi==0.115.0",
+  "uvicorn[standard]==0.30.6",
+  "sqlalchemy==2.0.36",
+  "psycopg[binary]==3.2.9",
+  "python-dotenv==1.0.1",
+  "requests==2.32.3",
+  "pydantic==2.9.2",
+  "langchain==0.3.7",
+  "langgraph==0.2.39",
+]
