@@ -13,7 +13,7 @@ class AzureLLMClient:
     def __init__(self):
         self.endpoint = os.getenv("AZURE_LLM_ENDPOINT", "").strip()
         self.api_key = os.getenv("AZURE_LLM_API_KEY", "").strip().strip('"')
-        self.model = os.getenv("AZURE_LLM_DEPLOYMENT_NAME", "")
+        self.model = os.getenv("AZURE_LLM_DEPLOYMENT_NAME", "").strip().strip('"')
 
     @property
     def is_enabled(self) -> bool:
@@ -32,7 +32,6 @@ class AzureLLMClient:
         payload = {
             "model": self.model,
             "messages": messages,
-            "temperature": 0.2,
         }
 
         headers = {

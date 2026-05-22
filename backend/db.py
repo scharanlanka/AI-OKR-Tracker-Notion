@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 # Always load the root .env file explicitly (repo/.env), even when running from backend/.
 ROOT_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(ROOT_ENV_PATH)
+load_dotenv(ROOT_ENV_PATH, override=True)
 
 # Default works with docker-compose service name.
 DATABASE_URL = os.getenv(

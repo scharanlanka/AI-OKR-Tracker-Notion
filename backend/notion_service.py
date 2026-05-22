@@ -59,6 +59,14 @@ def _prop_select(props: dict[str, Any], name: str) -> str:
     return sel.get("name", "")
 
 
+def _prop_multi_select(props: dict[str, Any], name: str) -> str:
+    prop = props.get(name, {})
+    values = prop.get("multi_select", [])
+    if not values:
+        return ""
+    return ", ".join([x.get("name", "") for x in values if x.get("name")]).strip()
+
+
 def _prop_people(props: dict[str, Any], name: str) -> str:
     prop = props.get(name, {})
     people = prop.get("people", [])
@@ -67,10 +75,30 @@ def _prop_people(props: dict[str, Any], name: str) -> str:
     return people[0].get("name") or people[0].get("id", "")
 
 
+def _prop_person_like(props: dict[str, Any], name: str) -> str:
+    """
+    Owner can be modeled as people, rich_text, select, or plain text.
+    """
+    return (
+        _prop_people(props, name)
+        or _prop_text(props, name)
+        or _prop_select(props, name)
+        or _prop_multi_select(props, name)
+        or ""
+    )
+
+
 def _prop_number(props: dict[str, Any], name: str) -> float:
     prop = props.get(name, {})
     value = prop.get("number")
     return float(value) if value is not None else 0.0
+
+
+def _norm_progress(value: float) -> float:
+    # Store as 0..1 internally even if Notion keeps 0..100.
+    if value > 1:
+        return value / 100.0
+    return max(0.0, value)
 
 
 def _prop_date(props: dict[str, Any], name: str):
@@ -82,6 +110,26 @@ def _prop_date(props: dict[str, Any], name: str):
         return datetime.fromisoformat(date_val["start"].replace("Z", "+00:00")).date()
     except Exception:
         return None
+
+
+def _prop_team(props: dict[str, Any]) -> str:
+    """
+    Team can be modeled differently across Notion DBs.
+    Try common shapes in priority order.
+    """
+    return (
+        _prop_select(props, "Team")
+        or _prop_multi_select(props, "Team")
+        or _prop_text(props, "Team")
+    )
+
+
+def _prop_first_nonempty(props: dict[str, Any], names: list[str], fn) -> Any:
+    for n in names:
+        v = fn(props, n)
+        if v not in ("", None):
+            return v
+    return None
 
 
 def sync_from_notion(db: Session) -> dict[str, int]:
@@ -106,10 +154,12 @@ def sync_from_notion(db: Session) -> dict[str, int]:
             db.add(existing)
 
         existing.title = title
-        existing.owner = _prop_people(props, "Owner") or existing.owner
+        existing.owner = _prop_person_like(props, "Owner") or existing.owner
+        existing.team = _prop_team(props) or existing.team
+        existing.quarter = _prop_select(props, "Quarter") or existing.quarter
         existing.status = _prop_select(props, "Status") or existing.status
-        existing.progress = _prop_number(props, "Progress")
-        existing.target_date = _prop_date(props, "Target Date")
+        existing.progress = _norm_progress(_prop_number(props, "Progress"))
+        existing.target_date = _prop_first_nonempty(props, ["Target Date", "Due Date"], _prop_date)
         objective_map[notion_id] = existing
 
     db.flush()
@@ -152,12 +202,18 @@ def sync_from_notion(db: Session) -> dict[str, int]:
 
         existing.objective_id = objective_id
         existing.title = title
-        existing.owner = _prop_people(props, "Owner") or existing.owner
+        existing.owner = _prop_person_like(props, "Owner") or existing.owner
+        existing.team = _prop_team(props) or existing.team
+        existing.risk = _prop_select(props, "Risk") or existing.risk
         existing.status = _prop_select(props, "Status") or existing.status
-        existing.progress = _prop_number(props, "Progress")
-        existing.deadline = _prop_date(props, "Deadline")
-        existing.is_blocked = bool(props.get("Blocked", {}).get("checkbox", False))
-        existing.blocker_notes = _prop_text(props, "Blocker Notes") or existing.blocker_notes
+        existing.progress = _norm_progress(_prop_number(props, "Progress"))
+        existing.deadline = _prop_first_nonempty(props, ["Deadline", "Due Date"], _prop_date)
+        existing.last_update = _prop_date(props, "Last Update") or existing.last_update
+        blocker_text = _prop_first_nonempty(props, ["Blocker", "Blocker Notes"], _prop_text) or ""
+        existing.blocker_notes = blocker_text or existing.blocker_notes
+        status_lower = (existing.status or "").lower()
+        checkbox_blocked = bool(props.get("Blocked", {}).get("checkbox", False))
+        existing.is_blocked = checkbox_blocked or ("blocked" in status_lower) or bool(blocker_text.strip())
 
     db.commit()
 
@@ -165,3 +221,80 @@ def sync_from_notion(db: Session) -> dict[str, int]:
         "objectives_synced": len(objective_pages),
         "key_results_synced": len(kr_pages),
     }
+
+
+def _build_select(name: str | None):
+    return {"select": {"name": name}} if name else None
+
+
+def _build_rich_text(value: str | None):
+    if not value:
+        return None
+    return {"rich_text": [{"type": "text", "text": {"content": value}}]}
+
+
+def _build_title(value: str):
+    return {"title": [{"type": "text", "text": {"content": value}}]}
+
+
+def create_objective_in_notion(
+    title: str,
+    owner: str | None = None,
+    status: str | None = None,
+    progress: float | None = None,
+) -> dict[str, Any]:
+    objectives_db_id = os.getenv("NOTION_OBJECTIVES_DB_ID", "")
+    if not objectives_db_id:
+        raise ValueError("NOTION_OBJECTIVES_DB_ID is required")
+
+    url = f"{NOTION_API_BASE}/pages"
+    properties: dict[str, Any] = {
+        # Works for common DB schemas.
+        "Objective": _build_title(title),
+    }
+    if owner:
+        # If Owner is people type, this may need adaptation with user IDs.
+        properties["Owner"] = _build_rich_text(owner)
+    if status:
+        properties["Status"] = _build_select(status)
+    if progress is not None:
+        properties["Progress"] = {"number": progress}
+
+    payload = {
+        "parent": {"database_id": objectives_db_id},
+        "properties": {k: v for k, v in properties.items() if v is not None},
+    }
+    resp = requests.post(url, json=payload, headers=_headers(), timeout=20)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def create_key_result_in_notion(
+    title: str,
+    objective_name: str | None = None,
+    owner: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    kr_db_id = os.getenv("NOTION_KEY_RESULTS_DB_ID", "")
+    if not kr_db_id:
+        raise ValueError("NOTION_KEY_RESULTS_DB_ID is required")
+
+    url = f"{NOTION_API_BASE}/pages"
+    properties: dict[str, Any] = {
+        "Key Result": _build_title(title),
+    }
+    if owner:
+        properties["Owner"] = _build_rich_text(owner)
+    if status:
+        properties["Status"] = _build_select(status)
+    if objective_name:
+        # Fallback-friendly field if no relation id is provided.
+        properties["Objective Name"] = _build_rich_text(objective_name)
+
+    payload = {
+        "parent": {"database_id": kr_db_id},
+        "properties": {k: v for k, v in properties.items() if v is not None},
+    }
+    resp = requests.post(url, json=payload, headers=_headers(), timeout=20)
+    resp.raise_for_status()
+    return resp.json()

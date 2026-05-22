@@ -22,6 +22,13 @@ def init_schema() -> None:
 
     print("[init_db] Creating tables if missing...")
     Base.metadata.create_all(bind=engine)
+    # Lightweight migration for existing local DBs.
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE objectives ADD COLUMN IF NOT EXISTS team VARCHAR(255)"))
+        conn.execute(text("ALTER TABLE objectives ADD COLUMN IF NOT EXISTS quarter VARCHAR(100)"))
+        conn.execute(text("ALTER TABLE key_results ADD COLUMN IF NOT EXISTS team VARCHAR(255)"))
+        conn.execute(text("ALTER TABLE key_results ADD COLUMN IF NOT EXISTS risk VARCHAR(100)"))
+        conn.execute(text("ALTER TABLE key_results ADD COLUMN IF NOT EXISTS last_update DATE"))
 
     inspector = inspect(engine)
     existing = set(inspector.get_table_names())

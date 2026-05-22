@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +15,8 @@ from schemas import AskRequest, AskResponse, DeadlineItem, ObjectiveOut, RiskIte
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-load_dotenv()
+ROOT_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(ROOT_ENV_PATH, override=True)
 
 app = FastAPI(title="OKR Tracker API", version="0.1.0")
 

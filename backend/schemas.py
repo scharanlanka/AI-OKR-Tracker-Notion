@@ -9,9 +9,12 @@ class KeyResultOut(BaseModel):
     objective_id: int
     title: str
     owner: Optional[str] = None
+    team: Optional[str] = None
+    risk: Optional[str] = None
     status: Optional[str] = None
     progress: float = 0.0
     deadline: Optional[date] = None
+    last_update: Optional[date] = None
     is_blocked: bool = False
     blocker_notes: Optional[str] = None
 
@@ -24,6 +27,8 @@ class ObjectiveOut(BaseModel):
     notion_id: str
     title: str
     owner: Optional[str] = None
+    team: Optional[str] = None
+    quarter: Optional[str] = None
     status: Optional[str] = None
     progress: float = 0.0
     target_date: Optional[date] = None
