@@ -141,6 +141,8 @@ def sync_from_notion(db: Session) -> dict[str, int]:
 
     objective_pages = _query_database(objectives_db_id)
     kr_pages = _query_database(key_results_db_id)
+    objective_notion_ids = {p["id"] for p in objective_pages}
+    kr_notion_ids = {p["id"] for p in kr_pages}
 
     objective_map: dict[str, Objective] = {}
     for page in objective_pages:
@@ -187,18 +189,26 @@ def sync_from_notion(db: Session) -> dict[str, int]:
                 if rel_obj:
                     objective_id = rel_obj.id
 
-        if objective_id is None and objective_map:
-            # Fallback for rough mock data.
-            objective_id = next(iter(objective_map.values())).id
-
         if objective_id is None:
-            logger.warning("Skipping KR with no objective mapping: %s", title)
-            continue
+            # Heuristic repair: map "Objective title - KR X" to objective title.
+            # Example: "Improve onboarding completion rate - KR 2" -> "Improve onboarding completion rate"
+            lower_title = title.lower()
+            if " - kr" in lower_title:
+                guessed_objective_title = title[: lower_title.index(" - kr")].strip().lower()
+                rel_obj = objective_by_title.get(guessed_objective_title)
+                if rel_obj:
+                    objective_id = rel_obj.id
 
         existing = db.query(KeyResult).filter(KeyResult.notion_id == notion_id).first()
         if not existing:
+            if objective_id is None:
+                logger.warning("Skipping new KR with no objective mapping: %s", title)
+                continue
             existing = KeyResult(notion_id=notion_id, objective_id=objective_id, title=title)
             db.add(existing)
+        elif objective_id is None:
+            # Preserve previous objective link if current payload doesn't provide one.
+            objective_id = existing.objective_id
 
         existing.objective_id = objective_id
         existing.title = title
@@ -214,6 +224,14 @@ def sync_from_notion(db: Session) -> dict[str, int]:
         status_lower = (existing.status or "").lower()
         checkbox_blocked = bool(props.get("Blocked", {}).get("checkbox", False))
         existing.is_blocked = checkbox_blocked or ("blocked" in status_lower) or bool(blocker_text.strip())
+
+    # Reconcile deletions:
+    # If a row exists locally but is no longer present in Notion DB query results,
+    # remove it so dashboard reflects Notion as source of truth.
+    if kr_notion_ids:
+        db.query(KeyResult).filter(~KeyResult.notion_id.in_(kr_notion_ids)).delete(synchronize_session=False)
+    if objective_notion_ids:
+        db.query(Objective).filter(~Objective.notion_id.in_(objective_notion_ids)).delete(synchronize_session=False)
 
     db.commit()
 
@@ -240,6 +258,8 @@ def _build_title(value: str):
 def create_objective_in_notion(
     title: str,
     owner: str | None = None,
+    team: str | None = None,
+    quarter: str | None = None,
     status: str | None = None,
     progress: float | None = None,
 ) -> dict[str, Any]:
@@ -253,8 +273,12 @@ def create_objective_in_notion(
         "Objective": _build_title(title),
     }
     if owner:
-        # If Owner is people type, this may need adaptation with user IDs.
+        # Owner is commonly rich_text in this template.
         properties["Owner"] = _build_rich_text(owner)
+    if team:
+        properties["Team"] = _build_select(team)
+    if quarter:
+        properties["Quarter"] = _build_select(quarter.upper())
     if status:
         properties["Status"] = _build_select(status)
     if progress is not None:
@@ -273,7 +297,11 @@ def create_key_result_in_notion(
     title: str,
     objective_name: str | None = None,
     owner: str | None = None,
+    team: str | None = None,
+    risk: str | None = None,
     status: str | None = None,
+    deadline: str | None = None,
+    progress: float | None = None,
 ) -> dict[str, Any]:
     kr_db_id = os.getenv("NOTION_KEY_RESULTS_DB_ID", "")
     if not kr_db_id:
@@ -285,8 +313,16 @@ def create_key_result_in_notion(
     }
     if owner:
         properties["Owner"] = _build_rich_text(owner)
+    if team:
+        properties["Team"] = _build_select(team)
+    if risk:
+        properties["Risk"] = _build_select(risk)
     if status:
         properties["Status"] = _build_select(status)
+    if deadline:
+        properties["Due Date"] = {"date": {"start": deadline}}
+    if progress is not None:
+        properties["Progress"] = {"number": progress * 100.0}
     if objective_name:
         # Fallback-friendly field if no relation id is provided.
         properties["Objective Name"] = _build_rich_text(objective_name)
