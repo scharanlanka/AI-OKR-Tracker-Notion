@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 import json
 import re
 from sqlalchemy.orm import Session
@@ -82,6 +82,45 @@ class ReadAgent:
         q = question.lower()
         return any(x in q for x in ["deadline", "deadlines", "due", "upcoming", "next"])
 
+    def _extract_reference_date(self, question: str) -> date | None:
+        q = question.lower().replace(",", " ")
+        iso = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", q)
+        if iso:
+            try:
+                return datetime.strptime(iso.group(1), "%Y-%m-%d").date()
+            except ValueError:
+                pass
+
+        month_first = re.search(
+            r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\s+(\d{4})\b",
+            q,
+        )
+        if month_first:
+            try:
+                return datetime.strptime(
+                    f"{month_first.group(1)} {month_first.group(2)} {month_first.group(3)}",
+                    "%B %d %Y",
+                ).date()
+            except ValueError:
+                pass
+
+        day_first = re.search(
+            r"\b(\d{1,2})\s+"
+            r"(january|february|march|april|may|june|july|august|september|october|november|december)\s+"
+            r"(\d{4})\b",
+            q,
+        )
+        if day_first:
+            try:
+                return datetime.strptime(
+                    f"{day_first.group(1)} {day_first.group(2)} {day_first.group(3)}",
+                    "%d %B %Y",
+                ).date()
+            except ValueError:
+                pass
+
+        return None
+
     def _extract_team_phrase(self, question: str) -> str | None:
         q = question.lower()
         m = re.search(r"assigned to\\s+the\\s+(.+?)\\??$", q)
@@ -138,9 +177,18 @@ class ReadAgent:
         all_objectives = db.query(Objective).order_by(Objective.updated_at.desc()).all()
 
         # Hop 1: targeted retrieval.
-        # Prioritize entity/person queries first so "owner + progress" questions
+        # Prioritize deadline intent before entity matching.
+        if self._is_deadline_query(question):
+            reference_date = self._extract_reference_date(question) or date.today()
+            rows = [r for r in flat_rows if r["deadline"] and r["deadline"] >= str(reference_date)]
+            rows.sort(key=lambda r: r["deadline"] or "9999-12-31")
+            retrieval["facts"] = {
+                "reference_date": str(reference_date),
+                "upcoming_key_results": rows[:100],
+            }
+        # Then prioritize entity/person queries so "owner + progress" questions
         # return concrete KR rows instead of aggregate summaries.
-        if self._has_entity_phrase(question):
+        elif self._has_entity_phrase(question):
             terms = self._extract_search_terms(question)
             matched = []
             for row in flat_rows:
@@ -161,14 +209,6 @@ class ReadAgent:
             retrieval["facts"] = {
                 "query_terms": terms,
                 "matched_key_results": boosted[:80],
-            }
-        elif self._is_deadline_query(question):
-            today = date.today()
-            rows = [r for r in flat_rows if r["deadline"] and r["deadline"] >= str(today)]
-            rows.sort(key=lambda r: r["deadline"] or "9999-12-31")
-            retrieval["facts"] = {
-                "today": str(today),
-                "upcoming_key_results": rows[:100],
             }
         elif self._is_progress_query(question):
             rows = self._team_progress_rows(db)
