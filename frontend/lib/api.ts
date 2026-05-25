@@ -1,5 +1,6 @@
 export type Objective = {
   id: number;
+  notion_id: string;
   title: string;
   owner?: string | null;
   team?: string | null;
@@ -10,6 +11,7 @@ export type Objective = {
 
 export type KeyResult = {
   id: number;
+  notion_id: string;
   objective_id: number;
   title: string;
   owner?: string | null;

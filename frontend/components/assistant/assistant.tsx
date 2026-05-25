@@ -36,14 +36,14 @@ export function AssistantWidget() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-40 grid h-14 w-14 place-items-center rounded-full bg-primary text-white shadow-soft"
+        className="fixed bottom-4 right-4 z-40 grid h-12 w-12 place-items-center rounded-full bg-primary text-white shadow-soft sm:bottom-6 sm:right-6 sm:h-14 sm:w-14"
       >
         <Bot className="h-8 w-8" />
       </button>
 
       {open && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm">
-          <div className="absolute right-6 top-6 flex h-[calc(100vh-3rem)] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-soft">
+          <div className="absolute inset-x-0 bottom-0 top-16 flex h-[calc(100vh-4rem)] w-full flex-col overflow-hidden rounded-t-3xl border border-border bg-card shadow-soft sm:inset-auto sm:right-6 sm:top-6 sm:h-[calc(100vh-3rem)] sm:max-w-xl sm:rounded-3xl">
             <div className="flex items-center justify-between border-b border-border p-4">
               <div className="flex items-center gap-3">
                 <div className="grid h-11 w-11 place-items-center rounded-full bg-primary/20 text-primary"><Bot /></div>

@@ -12,7 +12,7 @@ export function DashboardHeader({
 }) {
   return (
     <header className="sticky top-0 z-10 border-b border-border bg-bg/90 backdrop-blur">
-      <div className="mx-auto flex max-w-[1800px] items-center justify-between px-6 py-5">
+      <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:py-5">
         <div className="flex items-center gap-4">
           <div className="h-12 w-12 rounded-2xl bg-primary/90 text-white grid place-items-center text-lg">◎</div>
           <div>
@@ -21,15 +21,15 @@ export function DashboardHeader({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="rounded-full border border-border bg-card px-4 py-2 text-sm text-muted">
+        <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
+          <div className="rounded-full border border-border bg-card px-3 py-2 text-xs text-muted sm:px-4 sm:text-sm">
             <span className={`mr-2 inline-block h-2 w-2 rounded-full ${backendOnline ? "bg-success" : "bg-danger"}`} />
             {backendOnline ? "Backend online" : "Backend offline"}
           </div>
           <button
             onClick={onSync}
             disabled={isSyncing}
-            className="inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-5 py-3 text-lg font-medium shadow-soft disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-4 py-2.5 text-sm font-medium shadow-soft disabled:opacity-50 sm:px-5 sm:py-3 sm:text-lg"
           >
             <RefreshCw className={`h-5 w-5 ${isSyncing ? "animate-spin" : ""}`} />
             {isSyncing ? "Syncing..." : "Sync Notion"}

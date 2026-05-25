@@ -49,9 +49,9 @@ export default function HomePage() {
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_right,rgba(87,122,255,0.15),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(47,172,110,0.1),transparent_30%)]">
       <DashboardHeader isSyncing={syncing} onSync={onSync} backendOnline={backendOnline} />
 
-      <div className="mx-auto max-w-[1800px] space-y-6 px-6 py-8">
+      <div className="mx-auto max-w-[1800px] space-y-6 px-4 py-6 sm:px-6 sm:py-8">
         <section>
-          <h2 className="text-4xl font-semibold">OKR overview</h2>
+          <h2 className="text-3xl font-semibold sm:text-4xl">OKR overview</h2>
           <p className="mt-1.5 text-sm text-muted">Quarterly progress, risks, and deadlines across teams — synced from Notion.</p>
         </section>
 
