@@ -1,7 +1,7 @@
 "use client";
 
 import { Bot, Send, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { askAssistant } from "@/lib/api";
 
 type Message = { role: "user" | "assistant"; text: string; agent?: string };
@@ -10,9 +10,18 @@ export function AssistantWidget() {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mindIndex, setMindIndex] = useState(0);
   const [messages, setMessages] = useState<Message[]>([
     { role: "assistant", text: "Hi — I'm your OKR copilot. Ask about progress, risks, deadlines, owners, teams, blockers, or status.", agent: "router" },
   ]);
+  const mindMessages = ["Reading signals...", "Ready for queries", "Write actions enabled"];
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setMindIndex((x) => (x + 1) % mindMessages.length);
+    }, 2200);
+    return () => clearInterval(id);
+  }, []);
 
   async function sendMessage(text?: string) {
     const q = (text ?? input).trim();
@@ -34,12 +43,21 @@ export function AssistantWidget() {
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 z-40 grid h-12 w-12 place-items-center rounded-full bg-primary text-white shadow-soft sm:bottom-6 sm:right-6 sm:h-14 sm:w-14"
-      >
-        <Bot className="h-8 w-8" />
-      </button>
+      <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2 sm:bottom-6 sm:right-6">
+        <div className="rounded-full border border-emerald-800/70 bg-emerald-950/90 px-3 py-1.5 text-xs text-emerald-200 shadow-soft backdrop-blur">
+          <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+          <span key={mindIndex} className="inline-block animate-pulse">{mindMessages[mindIndex]}</span>
+        </div>
+        <button
+          onClick={() => setOpen(true)}
+          className="relative grid h-12 w-12 place-items-center rounded-full bg-primary text-white shadow-soft sm:h-14 sm:w-14"
+          aria-label="Open OKR Copilot"
+        >
+          <span className="pointer-events-none absolute -inset-1 rounded-full border border-primary/50 animate-pulse" />
+          <span className="pointer-events-none absolute -inset-3 rounded-full border border-primary/25 animate-ping" />
+          <Bot className="h-8 w-8" />
+        </button>
+      </div>
 
       {open && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm">
@@ -49,7 +67,13 @@ export function AssistantWidget() {
                 <div className="grid h-11 w-11 place-items-center rounded-full bg-primary/20 text-primary"><Bot /></div>
                 <div>
                   <div className="text-lg font-semibold">OKR Copilot</div>
-                  <div className="text-sm text-muted">Multi-agent routed via /ask</div>
+                  <div className="flex items-center gap-2 text-sm text-muted">
+                    <span className="relative inline-flex h-2.5 w-2.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/70" />
+                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
+                    </span>
+                    Online and ready
+                  </div>
                 </div>
               </div>
               <button onClick={() => setOpen(false)} className="rounded-xl p-2 hover:bg-bg"><X /></button>
