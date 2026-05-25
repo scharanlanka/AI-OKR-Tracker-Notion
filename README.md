@@ -79,19 +79,18 @@ Backend endpoints:
 - `GET /okrs/deadlines`
 - `POST /ask`
 
-## 4) Run Frontend
+## 4) Run Frontend (Next.js)
 
 Open a second terminal:
 
 ```bash
 cd frontend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run app.py --server.port 8001
+cp .env.local.example .env.local
+npm install
+npm run dev
 ```
 
-Set `BACKEND_URL` in `.env` if backend is not `http://localhost:8001`.
+Frontend runs on `http://localhost:8501` and calls backend via `NEXT_PUBLIC_BACKEND_URL` in `.env.local`.
 
 ## 5) Test Flow
 

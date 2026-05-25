@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 220 25% 97%;
+  --fg: 222 47% 11%;
+  --card: 0 0% 100%;
+  --border: 220 16% 86%;
+  --muted: 220 12% 44%;
+  --primary: 222 77% 63%;
+  --success: 146 44% 43%;
+  --warning: 38 83% 50%;
+  --danger: 0 75% 60%;
+}
+
+.dark {
+  --bg: 221 53% 7%;
+  --fg: 215 30% 92%;
+  --card: 222 35% 10%;
+  --border: 222 28% 20%;
+  --muted: 215 14% 60%;
+  --primary: 222 85% 70%;
+  --success: 146 48% 45%;
+  --warning: 38 86% 56%;
+  --danger: 0 78% 61%;
+}
+
+* { @apply border-border; }
+body {
+  @apply bg-bg text-fg antialiased;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}

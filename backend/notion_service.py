@@ -173,6 +173,7 @@ def sync_from_notion(db: Session) -> dict[str, int]:
         props = page.get("properties", {})
         notion_id = page["id"]
         title = _prop_text(props, "Key Result") or _prop_text(props, "Name") or "Untitled KR"
+        kr_team = _prop_team(props)
 
         objective_id = None
         objective_relation = props.get("Objective", {}).get("relation", [])
@@ -199,6 +200,20 @@ def sync_from_notion(db: Session) -> dict[str, int]:
                 if rel_obj:
                     objective_id = rel_obj.id
 
+        if objective_id is None and kr_team:
+            # Fallback: if exactly one objective matches KR team, attach to it.
+            team_matches = [
+                obj for obj in objective_map.values()
+                if (obj.team or "").strip().lower() == kr_team.strip().lower()
+            ]
+            if len(team_matches) == 1:
+                objective_id = team_matches[0].id
+
+        if objective_id is None and objective_map:
+            # Last-resort fallback to keep KR visible instead of skipping sync.
+            # Prefer the most recently created objective id in the local DB snapshot.
+            objective_id = max(objective_map.values(), key=lambda o: o.id or 0).id
+
         existing = db.query(KeyResult).filter(KeyResult.notion_id == notion_id).first()
         if not existing:
             if objective_id is None:
@@ -224,6 +239,10 @@ def sync_from_notion(db: Session) -> dict[str, int]:
         status_lower = (existing.status or "").lower()
         checkbox_blocked = bool(props.get("Blocked", {}).get("checkbox", False))
         existing.is_blocked = checkbox_blocked or ("blocked" in status_lower) or bool(blocker_text.strip())
+
+    # Flush ORM updates/inserts before running bulk reconciliation deletes.
+    # This avoids stale-row errors when bulk deletes run in the same transaction.
+    db.flush()
 
     # Reconcile deletions:
     # If a row exists locally but is no longer present in Notion DB query results,

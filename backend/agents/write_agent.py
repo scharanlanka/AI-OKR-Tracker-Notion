@@ -22,12 +22,18 @@ class WriteAgent:
         return m.group(1).strip() if m else None
 
     def _extract_owner_phrase(self, text: str) -> str | None:
-        m = re.search(
-            r"owned by\s+(.+?)(?:\s+by\s+\w+\s+team|\s+on\s+\w+\s+team|\s+in\s+q[1-4]|\s+with\s+|\s+the\s+status|\s+due\s+on|\s+progress|,|\.|$)",
-            text,
-            flags=re.IGNORECASE,
-        )
-        return m.group(1).strip() if m else None
+        patterns = [
+            r"owned by\s+(.+?)(?:\s+by\s+\w+\s+team|\s+on\s+\w+\s+team|\s+in\s+q[1-4]|\s+with\s+|\s+the\s+status|\s+status|\s+due\s+on|\s+progress|,|\.|$)",
+            r"with\s+(.+?)\s+as\s+owner(?:\s+on\s+\w+\s+team|\s+by\s+\w+\s+team|\s+in\s+q[1-4]|\s+with\s+|\s+status|\s+due\s+on|,|\.|$)",
+            r"assigned\s+to\s+(.+?)(?:\s+on\s+\w+\s+team|\s+by\s+\w+\s+team|\s+in\s+q[1-4]|\s+with\s+|\s+status|\s+due\s+on|,|\.|$)",
+        ]
+        for p in patterns:
+            m = re.search(p, text, flags=re.IGNORECASE)
+            if m:
+                owner = re.sub(r"\s+", " ", m.group(1)).strip(" ,.")
+                if owner:
+                    return owner
+        return None
 
     def _extract_team_phrase(self, text: str) -> str | None:
         m = re.search(r"(frontend|backend|platform|growth|customer|security|product)\s+team", text, flags=re.IGNORECASE)
@@ -67,6 +73,9 @@ class WriteAgent:
 
     def _extract_risk(self, text: str) -> str | None:
         q = text.lower()
+        m = re.search(r"\brisk(?:\s+being|\s+is|:)?\s*(high|medium|low|delayed)\b", q)
+        if m:
+            return m.group(1).capitalize()
         if "high risk" in q:
             return "High"
         if "medium risk" in q:
@@ -78,7 +87,7 @@ class WriteAgent:
         return None
 
     def _extract_due_date_iso(self, text: str) -> str | None:
-        # Supports formats like "5th june 2026", "5 june 2026", "2026-06-05"
+        # Supports: "5th june 2026", "5 june 2026", "june 5 2026", "2026-06-05"
         t = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", text, flags=re.IGNORECASE)
 
         m_iso = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", t)
@@ -95,6 +104,23 @@ class WriteAgent:
         if m_words:
             try:
                 dt = datetime.strptime(f"{m_words.group(1)} {m_words.group(2)} {m_words.group(3)}", "%d %B %Y")
+                return dt.strftime("%Y-%m-%d")
+            except ValueError:
+                return None
+
+        m_month_first = re.search(
+            r"\b"
+            r"(january|february|march|april|may|june|july|august|september|october|november|december)"
+            r"\s+(\d{1,2})(?:,)?\s+(\d{4})\b",
+            t,
+            flags=re.IGNORECASE,
+        )
+        if m_month_first:
+            try:
+                dt = datetime.strptime(
+                    f"{m_month_first.group(2)} {m_month_first.group(1)} {m_month_first.group(3)}",
+                    "%d %B %Y",
+                )
                 return dt.strftime("%Y-%m-%d")
             except ValueError:
                 return None
