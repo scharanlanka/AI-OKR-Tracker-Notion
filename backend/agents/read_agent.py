@@ -82,6 +82,10 @@ class ReadAgent:
         q = question.lower()
         return any(x in q for x in ["deadline", "deadlines", "due", "upcoming", "next"])
 
+    def _is_missed_deadline_query(self, question: str) -> bool:
+        q = question.lower()
+        return any(x in q for x in ["missed", "overdue", "past due", "late"])
+
     def _extract_reference_date(self, question: str) -> date | None:
         q = question.lower().replace(",", " ")
         iso = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", q)
@@ -180,11 +184,18 @@ class ReadAgent:
         # Prioritize deadline intent before entity matching.
         if self._is_deadline_query(question):
             reference_date = self._extract_reference_date(question) or date.today()
-            rows = [r for r in flat_rows if r["deadline"] and r["deadline"] >= str(reference_date)]
-            rows.sort(key=lambda r: r["deadline"] or "9999-12-31")
+            if self._is_missed_deadline_query(question):
+                rows = [r for r in flat_rows if r["deadline"] and r["deadline"] < str(reference_date)]
+                rows.sort(key=lambda r: r["deadline"] or "0000-01-01")
+                mode = "missed"
+            else:
+                rows = [r for r in flat_rows if r["deadline"] and r["deadline"] >= str(reference_date)]
+                rows.sort(key=lambda r: r["deadline"] or "9999-12-31")
+                mode = "upcoming"
             retrieval["facts"] = {
                 "reference_date": str(reference_date),
-                "upcoming_key_results": rows[:100],
+                "mode": mode,
+                "key_results": rows[:100],
             }
         # Then prioritize entity/person queries so "owner + progress" questions
         # return concrete KR rows instead of aggregate summaries.
