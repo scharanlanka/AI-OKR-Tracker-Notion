@@ -1,68 +1,87 @@
-# AI OKR Tracker MVP (Sprint 1)
+# OKR Tracker (Notion + FastAPI + Next.js + Agentic Assistant)
 
-Beginner-friendly full-stack vertical slice:
+OKR Tracker is a full-stack app that syncs OKR data from Notion into PostgreSQL, shows it in a Next.js dashboard, and supports natural-language read/write operations through routed agents.
 
-Notion mock OKR data -> PostgreSQL -> FastAPI -> LangGraph agents -> Streamlit UI
+Current architecture:
+- `router_agent`: classifies intent -> `read_agent` or `write_agent`
+- `read_agent`: schema-aware query planning from natural language
+- `write_agent`: schema-aware write planning (`create|update|delete`) to Notion
+- Streaming assistant responses over `POST /ask/stream` (SSE-style frames)
+
+## Tech Stack
+
+- Backend: FastAPI, SQLAlchemy, PostgreSQL, LangGraph
+- Frontend: Next.js (App Router), React, Tailwind CSS
+- Data source: Notion databases (Objectives + Key Results)
+- LLM: Azure OpenAI-compatible endpoint (optional but recommended)
 
 ## Project Structure
 
 ```text
-okr-tracker/
+OKR-Tracker/
 ├── backend/
-│   ├── main.py
-│   ├── db.py
-│   ├── models.py
-│   ├── schemas.py
-│   ├── llm.py
-│   ├── notion_service.py
-│   ├── okr_service.py
 │   ├── agents/
 │   │   ├── graph.py
 │   │   ├── router_agent.py
-│   │   ├── risk_agent.py
-│   │   ├── deadline_agent.py
-│   │   ├── blocker_agent.py
-│   │   ├── team_agent.py
-│   │   └── general_agent.py
-│   └── requirements.txt
+│   │   ├── read_agent.py
+│   │   └── write_agent.py
+│   ├── main.py
+│   ├── llm.py
+│   ├── notion_service.py
+│   ├── models.py
+│   ├── schemas.py
+│   ├── db.py
+│   ├── init_db.py
+│   ├── requirements.txt
+│   └── pyproject.toml
 ├── frontend/
-│   ├── app.py
-│   └── requirements.txt
-├── scripts/
-│   └── create_mock_notion_workspace.py
+│   ├── app/
+│   ├── components/
+│   ├── lib/
+│   └── package.json
+├── docker-compose.yml
 ├── .env.example
-├── README.md
-└── docker-compose.yml
+└── README.md
 ```
 
-## 1) Setup Environment
+## Environment Variables
 
-1. Copy env file:
+Copy and edit:
 
 ```bash
 cp .env.example .env
 ```
 
-2. Fill values in `.env`:
+Required for Notion sync/write:
 - `NOTION_TOKEN`
 - `NOTION_OBJECTIVES_DB_ID`
 - `NOTION_KEY_RESULTS_DB_ID`
-- Optional Azure LLM values:
-  - `AZURE_LLM_ENDPOINT`
-  - `AZURE_LLM_API_KEY`
-  - `AZURE_LLM_DEPLOYMENT_NAME`
 
-LLM is optional. If API key is missing, agents use rule-based summaries.
+Required for DB:
+- `DATABASE_URL` (defaults are set for docker-compose in this repo)
 
-## 2) Start PostgreSQL
+Optional but required for LLM routing/planning/streaming:
+- `AZURE_LLM_ENDPOINT`
+- `AZURE_LLM_API_KEY`
+- `AZURE_LLM_DEPLOYMENT_NAME`
+
+Frontend:
+
+```bash
+cp frontend/.env.local.example frontend/.env.local
+```
+
+- `NEXT_PUBLIC_BACKEND_URL` (example: `http://localhost:8001`)
+
+## Run with Docker DB + Local App
+
+1. Start PostgreSQL:
 
 ```bash
 docker compose up -d db
 ```
 
-This maps host `5433` -> container `5432`, so default `DATABASE_URL` uses port `5433`.
-
-## 3) Run Backend
+2. Start backend:
 
 ```bash
 cd backend
@@ -71,61 +90,83 @@ uv run python init_db.py
 uv run uvicorn main:app --reload --port 8001
 ```
 
-Backend endpoints:
+3. Start frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend default URL: `http://localhost:8501`
+
+## Backend API
+
 - `GET /health`
 - `POST /sync/notion`
 - `GET /okrs`
 - `GET /okrs/risks`
 - `GET /okrs/deadlines`
-- `POST /ask`
+- `POST /ask` (non-stream response)
+- `POST /ask/stream` (streaming response)
 
-## 4) Run Frontend (Next.js)
-
-Open a second terminal:
-
-```bash
-cd frontend
-cp .env.local.example .env.local
-npm install
-npm run dev
-```
-
-Frontend runs on `http://localhost:8501` and calls backend via `NEXT_PUBLIC_BACKEND_URL` in `.env.local`.
-
-## 5) Test Flow
-
-1. Click **Sync Notion** in Streamlit.
-2. Verify dashboard metrics populate.
-3. Open **Risk Report** and **Upcoming Deadlines** tables.
-4. Ask assistant questions such as:
-   - "What are our top risks?"
-   - "Which KRs are due soon?"
-   - "Show blocked work"
-
-## Azure LLM Notes
-
-`backend/llm.py` calls `AZURE_LLM_ENDPOINT` directly using OpenAI-compatible payload:
+### `/ask` request
 
 ```json
 {
-  "model": "AZURE_LLM_DEPLOYMENT_NAME",
-  "messages": [...]
+  "question": "Show upcoming deadlines with progress"
 }
 ```
 
-Headers include both `api-key` and `Authorization: Bearer ...` for compatibility.
-Errors are logged clearly and fallback logic prevents crashes.
+### `/ask/stream` protocol
 
-## Sprint 1 Scope
+`POST /ask/stream` returns `text/event-stream` frames like:
 
-Included:
-- FastAPI + SQLAlchemy + PostgreSQL
-- Notion sync service (insert/update)
-- LangGraph router + 5 specialist agents
-- Streamlit dashboard + assistant input
+```text
+data: {"type":"meta","agent":"read_agent"}
 
-Not included (intentionally):
-- Auth
-- Slack/email integrations
-- Vector DB/RAG complexity
-- Deployment infra
+data: {"type":"token","text":"Here "}
+
+data: {"type":"token","text":"are "}
+
+data: {"type":"done"}
+```
+
+Possible frame types:
+- `meta`: routed agent
+- `token`: streamed text chunk
+- `done`: stream complete
+- `error`: stream failed
+
+## Agent Behavior (Current)
+
+### Router Agent
+- Prompt-based intent routing.
+- Returns `read_agent` or `write_agent`.
+
+### Read Agent
+- Converts NL query into structured plan:
+  - entity (`objective|key_result|both`)
+  - filters (owner/team/status/risk/progress/date ranges/etc.)
+  - sort + limit
+- Date-aware defaults for relative queries (`upcoming`, `overdue`, etc.) using current date.
+- Special handling for “team with most missed deadlines”.
+
+### Write Agent
+- Converts NL request into structured write plan:
+  - action (`create|update|delete`)
+  - entity (`objective|key_result`)
+  - target filters + values
+- Executes against Notion pages (create/update/archive).
+- Uses SQL data to resolve target records for update/delete.
+
+## Notion Sync Model
+
+- `sync_from_notion` pulls both Notion DBs into local PostgreSQL.
+- Local DB is used for reads and for locating records during write updates/deletes.
+- Notion remains source of truth for write operations.
+
+## Notes
+
+- Streaming depends on a valid Azure endpoint that supports chat completions with `stream=true`.
+- If LLM is unavailable, behavior falls back to deterministic/minimal responses where implemented.
