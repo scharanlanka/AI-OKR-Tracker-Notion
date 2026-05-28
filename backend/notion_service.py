@@ -353,3 +353,80 @@ def create_key_result_in_notion(
     resp = requests.post(url, json=payload, headers=_headers(), timeout=20)
     resp.raise_for_status()
     return resp.json()
+
+
+def update_objective_in_notion(
+    notion_id: str,
+    title: str | None = None,
+    owner: str | None = None,
+    team: str | None = None,
+    quarter: str | None = None,
+    status: str | None = None,
+    progress: float | None = None,
+) -> dict[str, Any]:
+    url = f"{NOTION_API_BASE}/pages/{notion_id}"
+    properties: dict[str, Any] = {}
+    if title:
+        properties["Objective"] = _build_title(title)
+    if owner is not None:
+        properties["Owner"] = _build_rich_text(owner) or {"rich_text": []}
+    if team is not None:
+        properties["Team"] = _build_select(team)
+    if quarter is not None:
+        properties["Quarter"] = _build_select(quarter.upper() if quarter else None)
+    if status is not None:
+        properties["Status"] = _build_select(status)
+    if progress is not None:
+        properties["Progress"] = {"number": progress}
+
+    payload = {"properties": properties}
+    resp = requests.patch(url, json=payload, headers=_headers(), timeout=20)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def update_key_result_in_notion(
+    notion_id: str,
+    title: str | None = None,
+    objective_name: str | None = None,
+    owner: str | None = None,
+    team: str | None = None,
+    risk: str | None = None,
+    status: str | None = None,
+    deadline: str | None = None,
+    progress: float | None = None,
+    blocker_notes: str | None = None,
+) -> dict[str, Any]:
+    url = f"{NOTION_API_BASE}/pages/{notion_id}"
+    properties: dict[str, Any] = {}
+    if title:
+        properties["Key Result"] = _build_title(title)
+    if owner is not None:
+        properties["Owner"] = _build_rich_text(owner) or {"rich_text": []}
+    if team is not None:
+        properties["Team"] = _build_select(team)
+    if risk is not None:
+        properties["Risk"] = _build_select(risk)
+    if status is not None:
+        properties["Status"] = _build_select(status)
+    if deadline is not None:
+        properties["Due Date"] = {"date": {"start": deadline}} if deadline else {"date": None}
+    if progress is not None:
+        properties["Progress"] = {"number": progress * 100.0}
+    if objective_name is not None:
+        properties["Objective Name"] = _build_rich_text(objective_name) or {"rich_text": []}
+    if blocker_notes is not None:
+        properties["Blocker"] = _build_rich_text(blocker_notes) or {"rich_text": []}
+
+    payload = {"properties": properties}
+    resp = requests.patch(url, json=payload, headers=_headers(), timeout=20)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def archive_page_in_notion(notion_id: str) -> dict[str, Any]:
+    url = f"{NOTION_API_BASE}/pages/{notion_id}"
+    payload = {"archived": True}
+    resp = requests.patch(url, json=payload, headers=_headers(), timeout=20)
+    resp.raise_for_status()
+    return resp.json()

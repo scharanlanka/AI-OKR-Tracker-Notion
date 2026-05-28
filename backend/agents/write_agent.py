@@ -1,201 +1,217 @@
-import re
-from datetime import datetime
+from datetime import date, datetime, timedelta
+import json
+from typing import Any
+
 from sqlalchemy.orm import Session
 
 from llm import AzureLLMClient
-from notion_service import create_key_result_in_notion, create_objective_in_notion
+from models import KeyResult, Objective
+from notion_service import (
+    archive_page_in_notion,
+    create_key_result_in_notion,
+    create_objective_in_notion,
+    update_key_result_in_notion,
+    update_objective_in_notion,
+)
 
 
 class WriteAgent:
-    """Executes create/update intent on Notion and reports result."""
+    """Schema-aware write agent: infer action + fields from NL and execute in Notion."""
 
     def __init__(self, llm_client: AzureLLMClient):
         self.llm_client = llm_client
 
-    def _extract_value(self, text: str, field: str) -> str | None:
-        # Supports patterns like: title: ..., owner: ..., objective: ...
-        m = re.search(rf"{field}\s*:\s*([^,\n]+)", text, flags=re.IGNORECASE)
-        return m.group(1).strip() if m else None
+    def _default_plan(self) -> dict[str, Any]:
+        return {
+            "entity": "objective",
+            "action": "create",
+            "target_filters": {},
+            "values": {},
+        }
 
-    def _extract_quoted_title(self, text: str) -> str | None:
-        m = re.search(r'"([^"]+)"', text)
-        return m.group(1).strip() if m else None
-
-    def _extract_owner_phrase(self, text: str) -> str | None:
-        patterns = [
-            r"owned by\s+(.+?)(?:\s+by\s+\w+\s+team|\s+on\s+\w+\s+team|\s+in\s+q[1-4]|\s+with\s+|\s+the\s+status|\s+status|\s+due\s+on|\s+progress|,|\.|$)",
-            r"with\s+(.+?)\s+as\s+owner(?:\s+on\s+\w+\s+team|\s+by\s+\w+\s+team|\s+in\s+q[1-4]|\s+with\s+|\s+status|\s+due\s+on|,|\.|$)",
-            r"assigned\s+to\s+(.+?)(?:\s+on\s+\w+\s+team|\s+by\s+\w+\s+team|\s+in\s+q[1-4]|\s+with\s+|\s+status|\s+due\s+on|,|\.|$)",
-        ]
-        for p in patterns:
-            m = re.search(p, text, flags=re.IGNORECASE)
-            if m:
-                owner = re.sub(r"\s+", " ", m.group(1)).strip(" ,.")
-                if owner:
-                    return owner
-        return None
-
-    def _extract_team_phrase(self, text: str) -> str | None:
-        m = re.search(r"(frontend|backend|platform|growth|customer|security|product)\s+team", text, flags=re.IGNORECASE)
-        if not m:
+    def _parse_date_iso(self, value: str | None) -> str | None:
+        if not value:
             return None
-        return f"{m.group(1).capitalize()} Team"
-
-    def _extract_quarter(self, text: str) -> str | None:
-        m = re.search(r"\bq([1-4])\b", text, flags=re.IGNORECASE)
-        if not m:
-            return None
-        return f"Q{m.group(1)}"
-
-    def _extract_status(self, text: str) -> str | None:
-        q = text.lower()
-        if "not started" in q:
-            return "Not Started"
-        if "in progress" in q:
-            return "In Progress"
-        if "blocked" in q:
-            return "Blocked"
-        if "at risk" in q:
-            return "At Risk"
-        if "on track" in q:
-            return "On Track"
-        if "off track" in q:
-            return "Off Track"
-        if "planned" in q:
-            return "Planned"
-        return None
-
-    def _extract_progress(self, text: str) -> float | None:
-        m = re.search(r"(\d{1,3})\s*%", text)
-        if not m:
-            return None
-        return max(0.0, min(1.0, int(m.group(1)) / 100.0))
-
-    def _extract_risk(self, text: str) -> str | None:
-        q = text.lower()
-        m = re.search(r"\brisk(?:\s+being|\s+is|:)?\s*(high|medium|low|delayed)\b", q)
-        if m:
-            return m.group(1).capitalize()
-        if "high risk" in q:
-            return "High"
-        if "medium risk" in q:
-            return "Medium"
-        if "low risk" in q:
-            return "Low"
-        if "delayed" in q:
-            return "Delayed"
-        return None
-
-    def _extract_due_date_iso(self, text: str) -> str | None:
-        # Supports: "5th june 2026", "5 june 2026", "june 5 2026", "2026-06-05"
-        t = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", text, flags=re.IGNORECASE)
-
-        m_iso = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", t)
-        if m_iso:
-            return m_iso.group(1)
-
-        m_words = re.search(
-            r"\b(\d{1,2})\s+"
-            r"(january|february|march|april|may|june|july|august|september|october|november|december)"
-            r"\s+(\d{4})\b",
-            t,
-            flags=re.IGNORECASE,
-        )
-        if m_words:
+        value = value.strip().lower()
+        today = date.today()
+        if value == "today":
+            return today.isoformat()
+        if value == "tomorrow":
+            return (today + timedelta(days=1)).isoformat()
+        if value == "yesterday":
+            return (today - timedelta(days=1)).isoformat()
+        if value in {"next week", "in a week"}:
+            return (today + timedelta(days=7)).isoformat()
+        if value in {"next month", "in a month"}:
+            return (today + timedelta(days=30)).isoformat()
+        for fmt in ("%Y-%m-%d", "%d %B %Y", "%B %d %Y"):
             try:
-                dt = datetime.strptime(f"{m_words.group(1)} {m_words.group(2)} {m_words.group(3)}", "%d %B %Y")
-                return dt.strftime("%Y-%m-%d")
+                return datetime.strptime(value, fmt).strftime("%Y-%m-%d")
             except ValueError:
-                return None
+                continue
+        return value if len(value) == 10 and value[4] == "-" and value[7] == "-" else None
 
-        m_month_first = re.search(
-            r"\b"
-            r"(january|february|march|april|may|june|july|august|september|october|november|december)"
-            r"\s+(\d{1,2})(?:,)?\s+(\d{4})\b",
-            t,
-            flags=re.IGNORECASE,
+    def _infer_write_plan(self, question: str) -> dict[str, Any]:
+        plan = self._default_plan()
+        if not self.llm_client.is_enabled:
+            return plan
+
+        out = self.llm_client.chat(
+            system_prompt=(
+                "You convert a natural-language OKR WRITE request into strict JSON.\n"
+                "Return JSON only.\n"
+                f"Today is {date.today().isoformat()}.\n"
+                "Resolve relative date words to YYYY-MM-DD in values.deadline.\n"
+                "{"
+                "\"entity\":\"objective|key_result\","
+                "\"action\":\"create|update|delete\","
+                "\"target_filters\":{"
+                "\"title\":\"string\","
+                "\"objective_title\":\"string\","
+                "\"owner\":\"string\","
+                "\"team\":\"string\""
+                "},"
+                "\"values\":{"
+                "\"title\":\"string\","
+                "\"objective_title\":\"string\","
+                "\"owner\":\"string\","
+                "\"team\":\"string\","
+                "\"quarter\":\"string\","
+                "\"status\":\"string\","
+                "\"risk\":\"string\","
+                "\"progress\":0..1,"
+                "\"deadline\":\"YYYY-MM-DD\","
+                "\"blocker_notes\":\"string\""
+                "}"
+                "}\n"
+                "For create, populate values with fields to set.\n"
+                "For update/delete, use target_filters to identify row(s), values for updates.\n"
+                "Do not include extra keys."
+            ),
+            prompt=f"Request: {question}",
         )
-        if m_month_first:
-            try:
-                dt = datetime.strptime(
-                    f"{m_month_first.group(2)} {m_month_first.group(1)} {m_month_first.group(3)}",
-                    "%d %B %Y",
-                )
-                return dt.strftime("%Y-%m-%d")
-            except ValueError:
-                return None
+        try:
+            candidate = json.loads((out or "").strip())
+            if isinstance(candidate, dict):
+                plan.update(candidate)
+        except json.JSONDecodeError:
+            return plan
 
-        return None
+        if plan.get("entity") not in {"objective", "key_result"}:
+            plan["entity"] = "objective"
+        if plan.get("action") not in {"create", "update", "delete"}:
+            plan["action"] = "create"
+        if not isinstance(plan.get("target_filters"), dict):
+            plan["target_filters"] = {}
+        if not isinstance(plan.get("values"), dict):
+            plan["values"] = {}
+        return plan
 
-    def _extract_objective_ref(self, text: str) -> str | None:
-        m = re.search(r"\bfor\s+objective\s+\"([^\"]+)\"", text, flags=re.IGNORECASE)
-        if m:
-            return m.group(1).strip()
-        m = re.search(r"\bunder\s+objective\s+\"([^\"]+)\"", text, flags=re.IGNORECASE)
-        if m:
-            return m.group(1).strip()
-        return None
+    def _match_objectives(self, db: Session, filters: dict[str, Any]) -> list[Objective]:
+        q = db.query(Objective)
+        if filters.get("title"):
+            q = q.filter(Objective.title.ilike(f"%{filters['title']}%"))
+        if filters.get("owner"):
+            q = q.filter(Objective.owner.ilike(f"%{filters['owner']}%"))
+        if filters.get("team"):
+            q = q.filter(Objective.team.ilike(f"%{filters['team']}%"))
+        return q.order_by(Objective.updated_at.desc()).all()
+
+    def _match_key_results(self, db: Session, filters: dict[str, Any]) -> list[tuple[KeyResult, Objective]]:
+        q = db.query(KeyResult, Objective).join(Objective, KeyResult.objective_id == Objective.id)
+        if filters.get("title"):
+            q = q.filter(KeyResult.title.ilike(f"%{filters['title']}%"))
+        if filters.get("objective_title"):
+            q = q.filter(Objective.title.ilike(f"%{filters['objective_title']}%"))
+        if filters.get("owner"):
+            q = q.filter(KeyResult.owner.ilike(f"%{filters['owner']}%"))
+        if filters.get("team"):
+            q = q.filter(KeyResult.team.ilike(f"%{filters['team']}%"))
+        return q.order_by(KeyResult.updated_at.desc()).all()
+
+    def _create_objective(self, values: dict[str, Any]) -> str:
+        title = values.get("title")
+        if not title:
+            return "Missing required field: objective title."
+        created = create_objective_in_notion(
+            title=title,
+            owner=values.get("owner"),
+            team=values.get("team"),
+            quarter=values.get("quarter"),
+            status=values.get("status"),
+            progress=values.get("progress"),
+        )
+        return f"Created objective '{title}'. Notion page id: {created.get('id', 'unknown')}."
+
+    def _create_key_result(self, values: dict[str, Any]) -> str:
+        title = values.get("title")
+        if not title:
+            return "Missing required field: key result title."
+        deadline = self._parse_date_iso(values.get("deadline"))
+        created = create_key_result_in_notion(
+            title=title,
+            objective_name=values.get("objective_title"),
+            owner=values.get("owner"),
+            team=values.get("team"),
+            risk=values.get("risk"),
+            status=values.get("status"),
+            deadline=deadline,
+            progress=values.get("progress"),
+        )
+        return f"Created key result '{title}'. Notion page id: {created.get('id', 'unknown')}."
 
     def run(self, question: str, db: Session) -> str:
-        q = question.lower()
+        plan = self._infer_write_plan(question)
+        entity = plan["entity"]
+        action = plan["action"]
+        filters = plan.get("target_filters", {})
+        values = plan.get("values", {})
 
-        if "objective" in q and any(x in q for x in ["create", "add", "new"]):
-            title = (
-                self._extract_value(question, "title")
-                or self._extract_quoted_title(question)
-                or question.replace("create objective", "").replace("add objective", "").strip()
-            )
-            owner = self._extract_value(question, "owner") or self._extract_owner_phrase(question)
-            team = self._extract_value(question, "team") or self._extract_team_phrase(question)
-            quarter = self._extract_value(question, "quarter") or self._extract_quarter(question)
-            status = self._extract_value(question, "status") or self._extract_status(question)
-            progress = self._extract_progress(question)
+        if action == "create":
+            if entity == "objective":
+                return self._create_objective(values)
+            return self._create_key_result(values)
 
-            created = create_objective_in_notion(
-                title=title,
-                owner=owner,
-                team=team,
-                quarter=quarter,
-                status=status,
-                progress=progress,
+        if entity == "objective":
+            matches = self._match_objectives(db, filters)
+            if not matches:
+                return "No matching objective found for this write request."
+            target = matches[0]
+            if action == "delete":
+                archive_page_in_notion(target.notion_id)
+                return f"Deleted objective '{target.title}' (archived in Notion)."
+            updated = update_objective_in_notion(
+                notion_id=target.notion_id,
+                title=values.get("title"),
+                owner=values.get("owner"),
+                team=values.get("team"),
+                quarter=values.get("quarter"),
+                status=values.get("status"),
+                progress=values.get("progress"),
             )
-            return (
-                f"Added objective '{title}' to Notion "
-                f"(owner={owner or 'N/A'}, team={team or 'N/A'}, quarter={quarter or 'N/A'}, status={status or 'N/A'}). "
-                f"Notion page id: {created.get('id', 'unknown')}."
-            )
+            return f"Updated objective '{target.title}'. Notion page id: {updated.get('id', 'unknown')}."
 
-        if any(x in q for x in ["key result", "kr"]) and any(x in q for x in ["create", "add", "new"]):
-            title = (
-                self._extract_value(question, "title")
-                or self._extract_quoted_title(question)
-                or question.replace("create key result", "").replace("add key result", "").strip()
-            )
-            owner = self._extract_value(question, "owner") or self._extract_owner_phrase(question)
-            team = self._extract_value(question, "team") or self._extract_team_phrase(question)
-            risk = self._extract_value(question, "risk") or self._extract_risk(question)
-            status = self._extract_value(question, "status") or self._extract_status(question)
-            progress = self._extract_progress(question)
-            deadline = self._extract_due_date_iso(question)
-            objective_name = self._extract_value(question, "objective") or self._extract_objective_ref(question)
+        matches_kr = self._match_key_results(db, filters)
+        if not matches_kr:
+            return "No matching key result found for this write request."
+        kr, obj = matches_kr[0]
+        if action == "delete":
+            archive_page_in_notion(kr.notion_id)
+            return f"Deleted key result '{kr.title}' under '{obj.title}' (archived in Notion)."
 
-            created = create_key_result_in_notion(
-                title=title,
-                objective_name=objective_name,
-                owner=owner,
-                team=team,
-                risk=risk,
-                status=status,
-                deadline=deadline,
-                progress=progress,
-            )
-            return (
-                f"Added key result '{title}' to Notion "
-                f"(owner={owner or 'N/A'}, team={team or 'N/A'}, risk={risk or 'N/A'}, status={status or 'N/A'}, due={deadline or 'N/A'}). "
-                f"Notion page id: {created.get('id', 'unknown')}."
-            )
-
+        updated = update_key_result_in_notion(
+            notion_id=kr.notion_id,
+            title=values.get("title"),
+            objective_name=values.get("objective_title"),
+            owner=values.get("owner"),
+            team=values.get("team"),
+            risk=values.get("risk"),
+            status=values.get("status"),
+            deadline=self._parse_date_iso(values.get("deadline")),
+            progress=values.get("progress"),
+            blocker_notes=values.get("blocker_notes"),
+        )
         return (
-            "I can write to Notion for create/add actions. "
-            "Try: 'create objective title: Improve onboarding, owner: Alice, status: On Track'."
+            f"Updated key result '{kr.title}' under '{obj.title}'. "
+            f"Notion page id: {updated.get('id', 'unknown')}."
         )

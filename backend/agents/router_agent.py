@@ -11,8 +11,11 @@ class RouterAgent:
         if self.llm_client.is_enabled:
             out = self.llm_client.chat(
                 system_prompt=(
-                    "You classify OKR assistant requests. "
-                    "Return only one token: read_agent or write_agent."
+                    "You route OKR assistant requests by user intent.\n"
+                    "Return exactly one token: read_agent or write_agent.\n"
+                    "Use write_agent for create/add/update/edit/modify/delete/archive actions.\n"
+                    "Use read_agent for lookup/questions/summaries/listing/status checks.\n"
+                    "If ambiguous, default to read_agent."
                 ),
                 prompt=f"Question: {question}",
             )
@@ -20,11 +23,10 @@ class RouterAgent:
             if token in {"read_agent", "write_agent"}:
                 return token
 
-        # Fallback only when LLM routing is unavailable.
+        # Fallback only when LLM routing is unavailable or returns invalid output.
+        # Keep this intentionally minimal to avoid hardwired routing logic.
         q = question.lower()
-        write_keywords = [
-            "add", "create", "update", "change", "set", "mark", "edit", "insert", "new objective", "new key result",
-        ]
+        write_keywords = ["create", "add", "update", "edit", "modify", "delete", "remove"]
         if any(k in q for k in write_keywords):
             return "write_agent"
         return "read_agent"
