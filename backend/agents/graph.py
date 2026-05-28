@@ -60,3 +60,18 @@ class OKRGraph:
     def run(self, question: str, db: Session) -> tuple[str, str]:
         result = self.graph.invoke({"question": question, "db": db, "route": "", "answer": ""})
         return result["route"], result["answer"]
+
+    def route(self, question: str) -> str:
+        return self.router.route(question)
+
+    def stream(self, question: str, db: Session):
+        route = self.route(question)
+        if route == "read_agent":
+            return route, self.read_agent.run_stream(question, db)
+
+        def _write_stream():
+            text = self.write_agent.run(question, db)
+            for token in text.split(" "):
+                yield token + " "
+
+        return route, _write_stream()

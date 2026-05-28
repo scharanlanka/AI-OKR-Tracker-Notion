@@ -71,3 +71,64 @@ export async function askAssistant(question: string) {
     body: JSON.stringify({ question }),
   });
 }
+
+type AskStreamMetaEvent = { type: "meta"; agent: string };
+type AskStreamTokenEvent = { type: "token"; text: string };
+type AskStreamDoneEvent = { type: "done" };
+type AskStreamErrorEvent = { type: "error"; message: string };
+type AskStreamEvent = AskStreamMetaEvent | AskStreamTokenEvent | AskStreamDoneEvent | AskStreamErrorEvent;
+
+export async function askAssistantStream(
+  question: string,
+  handlers: {
+    onMeta?: (agent: string) => void;
+    onToken: (text: string) => void;
+    onDone?: () => void;
+  },
+) {
+  const res = await fetch(`${BASE_URL}/ask/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+    cache: "no-store",
+  });
+
+  if (!res.ok || !res.body) {
+    const text = await res.text();
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+
+  const decoder = new TextDecoder();
+  const reader = res.body.getReader();
+  let buffer = "";
+
+  const processBuffer = () => {
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const line = frame
+        .split("\n")
+        .find((x) => x.startsWith("data: "));
+      if (!line) continue;
+      const payload = line.slice("data: ".length);
+      let evt: AskStreamEvent;
+      try {
+        evt = JSON.parse(payload) as AskStreamEvent;
+      } catch {
+        continue;
+      }
+      if (evt.type === "meta") handlers.onMeta?.(evt.agent);
+      if (evt.type === "token") handlers.onToken(evt.text);
+      if (evt.type === "done") handlers.onDone?.();
+      if (evt.type === "error") throw new Error(evt.message || "Streaming failed");
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    processBuffer();
+  }
+  processBuffer();
+}

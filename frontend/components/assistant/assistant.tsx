@@ -2,9 +2,9 @@
 
 import { Bot, Send, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { askAssistant } from "@/lib/api";
+import { askAssistant, askAssistantStream } from "@/lib/api";
 
-type Message = { role: "user" | "assistant"; text: string; agent?: string };
+type Message = { id: string; role: "user" | "assistant"; text: string; agent?: string };
 
 export function AssistantWidget() {
   const [open, setOpen] = useState(false);
@@ -12,7 +12,12 @@ export function AssistantWidget() {
   const [loading, setLoading] = useState(false);
   const [mindIndex, setMindIndex] = useState(0);
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", text: "Hi — I'm your OKR copilot. Ask about progress, risks, deadlines, owners, teams, blockers, or status.", agent: "router" },
+    {
+      id: "welcome",
+      role: "assistant",
+      text: "Hi — I'm your OKR copilot. Ask about progress, risks, deadlines, owners, teams, blockers, or status.",
+      agent: "router",
+    },
   ]);
   const mindMessages = ["Reading signals...", "Ready for queries", "Write actions enabled"];
 
@@ -27,15 +32,47 @@ export function AssistantWidget() {
     const q = (text ?? input).trim();
     if (!q || loading) return;
 
-    setMessages((m) => [...m, { role: "user", text: q }]);
+    setMessages((m) => [...m, { id: `u-${Date.now()}`, role: "user", text: q }]);
     setInput("");
     setLoading(true);
+    let streamId: string | null = null;
 
     try {
-      const res = await askAssistant(q);
-      setMessages((m) => [...m, { role: "assistant", text: res.answer, agent: res.agent }]);
-    } catch (error) {
-      setMessages((m) => [...m, { role: "assistant", text: `Request failed: ${(error as Error).message}` }]);
+      const currentStreamId = `a-${Date.now()}`;
+      streamId = currentStreamId;
+      setMessages((m) => [...m, { id: currentStreamId, role: "assistant", text: "", agent: "router" }]);
+      await askAssistantStream(q, {
+        onMeta: (agent) => {
+          setMessages((m) =>
+            m.map((msg) => (msg.id === currentStreamId ? { ...msg, agent } : msg)),
+          );
+        },
+        onToken: (text) => {
+          setMessages((m) =>
+            m.map((msg) => (msg.id === currentStreamId ? { ...msg, text: `${msg.text}${text}` } : msg)),
+          );
+        },
+      });
+    } catch {
+      if (streamId) {
+        setMessages((m) => m.filter((msg) => msg.id !== streamId));
+      }
+      try {
+        const res = await askAssistant(q);
+        setMessages((m) => [
+          ...m,
+          { id: `a-fb-${Date.now()}`, role: "assistant", text: res.answer, agent: res.agent },
+        ]);
+      } catch (fallbackError) {
+        setMessages((m) => [
+          ...m,
+          {
+            id: `a-err-${Date.now()}`,
+            role: "assistant",
+            text: `Request failed: ${(fallbackError as Error).message}`,
+          },
+        ]);
+      }
     } finally {
       setLoading(false);
     }

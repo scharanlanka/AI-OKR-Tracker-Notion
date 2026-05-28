@@ -13,4 +13,5 @@ dependencies = [
   "pydantic==2.9.2",
   "langchain==0.3.7",
   "langgraph==0.2.39",
+  "azure-ai-inference==1.0.0b9",
 ]

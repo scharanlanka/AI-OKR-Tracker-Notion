@@ -336,15 +336,66 @@ class ReadAgent:
             return "No matches found."
 
         response = self.llm_client.chat(
-            system_prompt=(
-                "You are the OKR read assistant. "
-                "Answer using only provided facts. "
-                f"Today's date is {self._today_iso()}. Use it for time-relative interpretation. "
-                "If no strict match exists, say none found and then provide the closest available rows from fallback context."
-            ),
-            prompt=(
-                f"User question: {question}\n\n"
-                f"Retrieved context:\n{json.dumps(facts, indent=2)}"
-            ),
+            system_prompt=self._read_system_prompt(),
+            prompt=self._read_user_prompt(question, facts),
         )
         return response or "I could not generate a response from LLM for this read query."
+
+    def _read_system_prompt(self) -> str:
+        return (
+            "You are the OKR read assistant. "
+            "Answer using only provided facts. "
+            f"Today's date is {self._today_iso()}. Use it for time-relative interpretation. "
+            "If no strict match exists, say none found and then provide the closest available rows from fallback context."
+        )
+
+    def _read_user_prompt(self, question: str, facts: dict[str, Any]) -> str:
+        return f"User question: {question}\n\nRetrieved context:\n{json.dumps(facts, indent=2)}"
+
+    def run_stream(self, question: str, db: Session):
+        if not self.llm_client.is_enabled:
+            yield self.run(question, db)
+            return
+
+        # Regenerate with stream so frontend can render token-by-token.
+        # We recompute for parity with run() behavior.
+        kr_pairs = (
+            db.query(KeyResult, Objective)
+            .join(Objective, KeyResult.objective_id == Objective.id)
+            .order_by(KeyResult.updated_at.desc())
+            .all()
+        )
+        objectives = db.query(Objective).order_by(Objective.updated_at.desc()).all()
+        objective_rows = self._to_objective_rows(objectives)
+        kr_rows = self._to_kr_rows(kr_pairs)
+        plan = self._infer_query_plan(question)
+        entity = plan.get("entity", "both")
+        filters = plan.get("filters", {})
+        sort_by = plan.get("sort_by")
+        sort_order = plan.get("sort_order", "asc")
+        limit = plan.get("limit", 50)
+        filtered_objectives: list[dict[str, Any]] = []
+        filtered_key_results: list[dict[str, Any]] = []
+        if entity in {"objective", "both"}:
+            filtered_objectives = self._sort_rows(
+                self._filter_rows(objective_rows, filters, is_kr=False), sort_by, sort_order
+            )[:limit]
+        if entity in {"key_result", "both"}:
+            filtered_key_results = self._sort_rows(
+                self._filter_rows(kr_rows, filters, is_kr=True), sort_by, sort_order
+            )[:limit]
+        facts = {"query_plan": plan, "objectives": filtered_objectives, "key_results": filtered_key_results}
+        if not filtered_objectives and not filtered_key_results:
+            facts["objectives"] = objective_rows[: min(30, len(objective_rows))]
+            facts["key_results"] = kr_rows[: min(50, len(kr_rows))]
+            facts["fallback_mode"] = "broad_context"
+
+        yielded = False
+        for chunk in self.llm_client.chat_stream(
+            prompt=self._read_user_prompt(question, facts),
+            system_prompt=self._read_system_prompt(),
+        ):
+            yielded = True
+            yield chunk
+        if not yielded:
+            yield self.run(question, db)

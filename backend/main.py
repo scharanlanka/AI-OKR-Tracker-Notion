@@ -1,8 +1,10 @@
 import logging
+import json
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -75,3 +77,31 @@ def ask_assistant(payload: AskRequest, db: Session = Depends(get_db)):
     except Exception as exc:  # noqa: BLE001
         logger.exception("Agent query failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Agent query failed: {exc}")
+
+
+@app.post("/ask/stream")
+def ask_assistant_stream(payload: AskRequest, db: Session = Depends(get_db)):
+    try:
+        route, token_stream = agent_graph.stream(payload.question, db)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Agent stream setup failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Agent stream setup failed: {exc}")
+
+    def event_stream():
+        chunks: list[str] = []
+        try:
+            yield f"data: {json.dumps({'type': 'meta', 'agent': route})}\n\n"
+            for chunk in token_stream:
+                chunks.append(chunk)
+                yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
+            answer = "".join(chunks).strip()
+            log = AgentLog(question=payload.question, routed_agent=route, response=answer)
+            db.add(log)
+            db.commit()
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Agent streaming failed: %s", exc)
+            db.rollback()
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
