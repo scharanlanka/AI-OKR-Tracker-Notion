@@ -46,7 +46,7 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_right,rgba(87,122,255,0.15),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(47,172,110,0.1),transparent_30%)]">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_right,rgba(36,161,233,0.22),transparent_40%),radial-gradient(circle_at_bottom_left,rgba(22,125,213,0.16),transparent_32%)]">
       <DashboardHeader isSyncing={syncing} onSync={onSync} backendOnline={backendOnline} />
 
       <div className="mx-auto max-w-[1800px] space-y-6 px-4 py-6 sm:px-6 sm:py-8">

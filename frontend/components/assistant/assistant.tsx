@@ -7,6 +7,7 @@ import { askAssistant, askAssistantStream } from "@/lib/api";
 type Message = { id: string; role: "user" | "assistant"; text: string; agent?: string };
 
 export function AssistantWidget() {
+  const MAX_INPUT_CHARS = 300;
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -29,7 +30,7 @@ export function AssistantWidget() {
   }, []);
 
   async function sendMessage(text?: string) {
-    const q = (text ?? input).trim();
+    const q = (text ?? input).trim().slice(0, MAX_INPUT_CHARS);
     if (!q || loading) return;
 
     setMessages((m) => [...m, { id: `u-${Date.now()}`, role: "user", text: q }]);
@@ -81,8 +82,8 @@ export function AssistantWidget() {
   return (
     <>
       <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2 sm:bottom-6 sm:right-6">
-        <div className="rounded-full border border-emerald-800/70 bg-emerald-950/90 px-3 py-1.5 text-xs text-emerald-200 shadow-soft backdrop-blur">
-          <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+        <div className="rounded-full border border-primary/30 bg-white/92 px-3 py-1.5 text-xs text-fg shadow-soft backdrop-blur dark:border-emerald-800/70 dark:bg-emerald-950/90 dark:text-emerald-200">
+          <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-primary dark:bg-emerald-500" />
           <span key={mindIndex} className="inline-block animate-pulse">{mindMessages[mindIndex]}</span>
         </div>
         <button
@@ -139,14 +140,18 @@ export function AssistantWidget() {
               <div className="flex items-center gap-2">
                 <input
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => setInput(e.target.value.slice(0, MAX_INPUT_CHARS))}
                   onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                   placeholder="Ask about progress, risks, deadlines..."
+                  maxLength={MAX_INPUT_CHARS}
                   className="h-12 flex-1 rounded-2xl border border-border bg-bg px-4 outline-none focus:ring-2 focus:ring-primary/30"
                 />
                 <button onClick={() => sendMessage()} disabled={loading} className="grid h-12 w-12 place-items-center rounded-2xl bg-primary text-white disabled:opacity-50">
                   <Send className="h-4 w-4" />
                 </button>
+              </div>
+              <div className="text-right text-xs text-muted">
+                {input.length}/{MAX_INPUT_CHARS}
               </div>
             </div>
           </div>

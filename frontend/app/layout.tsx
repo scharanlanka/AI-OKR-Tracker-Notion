@@ -2,7 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "AI OKR Tracker",
+  title: "Qualified OKR Tracker",
   description: "Mission control for objectives, key results, and AI assistance",
 };
 
