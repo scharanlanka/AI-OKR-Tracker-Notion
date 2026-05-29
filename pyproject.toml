@@ -4,4 +4,6 @@ version = "0.1.0"
 description = "AI OKR Tracker MVP"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "faker>=40.19.1",
+]

@@ -56,6 +56,13 @@ def create_database(name, properties):
     return db["id"]
 
 
+def update_database(database_id, properties):
+    payload = {"properties": properties}
+    db = request("PATCH", f"/databases/{database_id}", payload)
+    print(f"Updated database: {database_id}")
+    return db
+
+
 def create_row(database_id, properties):
     payload = {
         "parent": {
@@ -66,6 +73,7 @@ def create_row(database_id, properties):
 
     page = request("POST", "/pages", payload)
     print("Inserted row:", page["id"])
+    return page["id"]
 
 
 def title(value):
@@ -160,19 +168,33 @@ blockers = [
 def main():
     objectives_db_id = create_database("Objectives", objective_db_schema)
     key_results_db_id = create_database("Key Results", key_result_db_schema)
+    update_database(
+        key_results_db_id,
+        {
+            "Objective": {
+                "relation": {
+                    "database_id": objectives_db_id,
+                    "type": "single_property",
+                    "single_property": {}
+                }
+            }
+        },
+    )
 
+    objective_page_ids = {}
     for obj in objectives:
         team = random.choice(teams)
         owner = fake.name()
         status = random.choice(statuses)
 
-        create_row(objectives_db_id, {
+        page_id = create_row(objectives_db_id, {
             "Objective": title(obj),
             "Team": select(team),
             "Owner": rich_text(owner),
             "Quarter": select("Q2"),
             "Status": select(status),
         })
+        objective_page_ids[obj] = page_id
 
         for i in range(1, 4):
             progress = random.choice([0.10, 0.25, 0.45, 0.60, 0.80, 1.00])
@@ -190,6 +212,9 @@ def main():
                 "Risk": select(random.choice(risks)),
                 "Blocker": rich_text(blocker),
                 "Last Update": date(last_update),
+                "Objective": {
+                    "relation": [{"id": objective_page_ids[obj]}]
+                },
             })
 
     print("\nDone.")
