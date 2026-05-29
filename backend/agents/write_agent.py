@@ -143,14 +143,25 @@ class WriteAgent:
         )
         return f"Created objective '{title}'. Notion page id: {created.get('id', 'unknown')}."
 
-    def _create_key_result(self, values: dict[str, Any]) -> str:
+    def _create_key_result(self, values: dict[str, Any], db: Session) -> str:
         title = values.get("title")
         if not title:
             return "Missing required field: key result title."
+        objective_title = (values.get("objective_title") or "").strip()
+        if not objective_title:
+            return "Missing required field: objective for this key result."
+
+        matches = self._match_objectives(db=db, filters={"title": objective_title})
+        if not matches:
+            return f"No matching objective found for title '{objective_title}'."
+        if len(matches) > 1:
+            return f"Multiple objectives matched '{objective_title}'. Please provide a more specific objective title."
+        objective = matches[0]
+
         deadline = self._parse_date_iso(values.get("deadline"))
         created = create_key_result_in_notion(
             title=title,
-            objective_name=values.get("objective_title"),
+            objective_notion_id=objective.notion_id,
             owner=values.get("owner"),
             team=values.get("team"),
             risk=values.get("risk"),
@@ -158,7 +169,10 @@ class WriteAgent:
             deadline=deadline,
             progress=values.get("progress"),
         )
-        return f"Created key result '{title}'. Notion page id: {created.get('id', 'unknown')}."
+        return (
+            f"Created key result '{title}' under objective '{objective.title}'. "
+            f"Notion page id: {created.get('id', 'unknown')}."
+        )
 
     def run(self, question: str, db: Session) -> str:
         plan = self._infer_write_plan(question)
@@ -170,7 +184,7 @@ class WriteAgent:
         if action == "create":
             if entity == "objective":
                 return self._create_objective(values)
-            return self._create_key_result(values)
+            return self._create_key_result(values, db)
 
         if entity == "objective":
             matches = self._match_objectives(db, filters)
@@ -202,7 +216,7 @@ class WriteAgent:
         updated = update_key_result_in_notion(
             notion_id=kr.notion_id,
             title=values.get("title"),
-            objective_name=values.get("objective_title"),
+            objective_notion_id=self._resolve_objective_notion_id(values.get("objective_title"), db, obj.notion_id),
             owner=values.get("owner"),
             team=values.get("team"),
             risk=values.get("risk"),
@@ -215,3 +229,13 @@ class WriteAgent:
             f"Updated key result '{kr.title}' under '{obj.title}'. "
             f"Notion page id: {updated.get('id', 'unknown')}."
         )
+
+    def _resolve_objective_notion_id(
+        self, objective_title: str | None, db: Session, default_notion_id: str
+    ) -> str:
+        if not objective_title:
+            return default_notion_id
+        matches = self._match_objectives(db, {"title": objective_title.strip()})
+        if len(matches) == 1:
+            return matches[0].notion_id
+        return default_notion_id

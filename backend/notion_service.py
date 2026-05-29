@@ -166,14 +166,12 @@ def sync_from_notion(db: Session) -> dict[str, int]:
 
     db.flush()
 
-    # Helper by title for simple mock workspace relation if no relation field exists.
-    objective_by_title = {obj.title.lower(): obj for obj in objective_map.values()}
+    skipped_kr_without_objective = 0
 
     for page in kr_pages:
         props = page.get("properties", {})
         notion_id = page["id"]
         title = _prop_text(props, "Key Result") or _prop_text(props, "Name") or "Untitled KR"
-        kr_team = _prop_team(props)
 
         objective_id = None
         objective_relation = props.get("Objective", {}).get("relation", [])
@@ -183,47 +181,19 @@ def sync_from_notion(db: Session) -> dict[str, int]:
             if rel_obj:
                 objective_id = rel_obj.id
 
-        if objective_id is None:
-            objective_name = _prop_text(props, "Objective Name")
-            if objective_name:
-                rel_obj = objective_by_title.get(objective_name.lower())
-                if rel_obj:
-                    objective_id = rel_obj.id
-
-        if objective_id is None:
-            # Heuristic repair: map "Objective title - KR X" to objective title.
-            # Example: "Improve onboarding completion rate - KR 2" -> "Improve onboarding completion rate"
-            lower_title = title.lower()
-            if " - kr" in lower_title:
-                guessed_objective_title = title[: lower_title.index(" - kr")].strip().lower()
-                rel_obj = objective_by_title.get(guessed_objective_title)
-                if rel_obj:
-                    objective_id = rel_obj.id
-
-        if objective_id is None and kr_team:
-            # Fallback: if exactly one objective matches KR team, attach to it.
-            team_matches = [
-                obj for obj in objective_map.values()
-                if (obj.team or "").strip().lower() == kr_team.strip().lower()
-            ]
-            if len(team_matches) == 1:
-                objective_id = team_matches[0].id
-
-        if objective_id is None and objective_map:
-            # Last-resort fallback to keep KR visible instead of skipping sync.
-            # Prefer the most recently created objective id in the local DB snapshot.
-            objective_id = max(objective_map.values(), key=lambda o: o.id or 0).id
-
         existing = db.query(KeyResult).filter(KeyResult.notion_id == notion_id).first()
         if not existing:
             if objective_id is None:
                 logger.warning("Skipping new KR with no objective mapping: %s", title)
+                skipped_kr_without_objective += 1
                 continue
             existing = KeyResult(notion_id=notion_id, objective_id=objective_id, title=title)
             db.add(existing)
         elif objective_id is None:
-            # Preserve previous objective link if current payload doesn't provide one.
-            objective_id = existing.objective_id
+            # Strict mode: keep existing row unchanged when relation is missing.
+            logger.warning("Skipping KR update due to missing objective relation: %s", title)
+            skipped_kr_without_objective += 1
+            continue
 
         existing.objective_id = objective_id
         existing.title = title
@@ -257,6 +227,7 @@ def sync_from_notion(db: Session) -> dict[str, int]:
     return {
         "objectives_synced": len(objective_pages),
         "key_results_synced": len(kr_pages),
+        "key_results_skipped_without_objective": skipped_kr_without_objective,
     }
 
 
@@ -314,7 +285,7 @@ def create_objective_in_notion(
 
 def create_key_result_in_notion(
     title: str,
-    objective_name: str | None = None,
+    objective_notion_id: str,
     owner: str | None = None,
     team: str | None = None,
     risk: str | None = None,
@@ -329,6 +300,7 @@ def create_key_result_in_notion(
     url = f"{NOTION_API_BASE}/pages"
     properties: dict[str, Any] = {
         "Key Result": _build_title(title),
+        "Objective": {"relation": [{"id": objective_notion_id}]},
     }
     if owner:
         properties["Owner"] = _build_rich_text(owner)
@@ -342,10 +314,6 @@ def create_key_result_in_notion(
         properties["Due Date"] = {"date": {"start": deadline}}
     if progress is not None:
         properties["Progress"] = {"number": progress * 100.0}
-    if objective_name:
-        # Fallback-friendly field if no relation id is provided.
-        properties["Objective Name"] = _build_rich_text(objective_name)
-
     payload = {
         "parent": {"database_id": kr_db_id},
         "properties": {k: v for k, v in properties.items() if v is not None},
@@ -388,7 +356,7 @@ def update_objective_in_notion(
 def update_key_result_in_notion(
     notion_id: str,
     title: str | None = None,
-    objective_name: str | None = None,
+    objective_notion_id: str | None = None,
     owner: str | None = None,
     team: str | None = None,
     risk: str | None = None,
@@ -413,8 +381,8 @@ def update_key_result_in_notion(
         properties["Due Date"] = {"date": {"start": deadline}} if deadline else {"date": None}
     if progress is not None:
         properties["Progress"] = {"number": progress * 100.0}
-    if objective_name is not None:
-        properties["Objective Name"] = _build_rich_text(objective_name) or {"rich_text": []}
+    if objective_notion_id is not None:
+        properties["Objective"] = {"relation": [{"id": objective_notion_id}]}
     if blocker_notes is not None:
         properties["Blocker"] = _build_rich_text(blocker_notes) or {"rich_text": []}
 
