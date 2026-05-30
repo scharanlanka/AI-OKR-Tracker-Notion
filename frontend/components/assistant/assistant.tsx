@@ -12,6 +12,9 @@ export function AssistantWidget() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [mindIndex, setMindIndex] = useState(0);
+  const [showSuggestions, setShowSuggestions] = useState(true);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [suggestionAnimate, setSuggestionAnimate] = useState(true);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
@@ -29,10 +32,27 @@ export function AssistantWidget() {
     return () => clearInterval(id);
   }, []);
 
+  const suggestionPrompts = [
+    "Which KRs are most at risk this quarter?",
+    "Show upcoming deadlines with progress",
+    "Objectives owned by Laura Johnson",
+  ];
+  const suggestionLoop = [...suggestionPrompts, suggestionPrompts[0]];
+
+  useEffect(() => {
+    if (!showSuggestions || suggestionPrompts.length <= 1) return;
+    const id = setInterval(() => {
+      setSuggestionAnimate(true);
+      setSuggestionIndex((x) => x + 1);
+    }, 2800);
+    return () => clearInterval(id);
+  }, [showSuggestions, suggestionPrompts.length]);
+
   async function sendMessage(text?: string) {
     const q = (text ?? input).trim().slice(0, MAX_INPUT_CHARS);
     if (!q || loading) return;
 
+    setShowSuggestions(false);
     setMessages((m) => [...m, { id: `u-${Date.now()}`, role: "user", text: q }]);
     setInput("");
     setLoading(true);
@@ -128,15 +148,31 @@ export function AssistantWidget() {
             </div>
 
             <div className="space-y-3 border-t border-border p-4">
-              <div className="flex flex-wrap gap-2 text-sm">
-                {[
-                  "Which KRs are most at risk this quarter?",
-                  "Show upcoming deadlines with progress",
-                  "Objectives owned by Laura Johnson",
-                ].map((q) => (
-                  <button key={q} onClick={() => sendMessage(q)} className="rounded-full border border-border bg-bg px-3 py-1">{q}</button>
-                ))}
-              </div>
+              {showSuggestions && (
+                <div className="overflow-hidden text-sm">
+                  <div
+                    className={`flex ${suggestionAnimate ? "transition-transform duration-500 ease-out" : ""}`}
+                    style={{ transform: `translateX(-${suggestionIndex * 100}%)` }}
+                    onTransitionEnd={() => {
+                      if (suggestionIndex === suggestionPrompts.length) {
+                        setSuggestionAnimate(false);
+                        setSuggestionIndex(0);
+                      }
+                    }}
+                  >
+                    {suggestionLoop.map((q, idx) => (
+                      <div key={`${q}-${idx}`} className="w-full shrink-0">
+                        <button
+                          onClick={() => sendMessage(q)}
+                          className="w-full rounded-2xl border border-border bg-bg px-3 py-2 text-left"
+                        >
+                          {q}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <input
                   value={input}
