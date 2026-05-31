@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 
 NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
+STATUS_NOT_STARTED = "Not Started"
+STATUS_IN_PROGRESS = "In Progress"
+STATUS_COMPLETED = "Completed"
 
 
 @contextmanager
@@ -160,6 +163,43 @@ def _prop_first_nonempty(props: dict[str, Any], names: list[str], fn) -> Any:
     return None
 
 
+def _normalize_status(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    value = raw.strip().lower()
+    if value in {"not started", "not_started", "todo", "to do"}:
+        return STATUS_NOT_STARTED
+    if value in {"completed", "complete", "done"}:
+        return STATUS_COMPLETED
+    if value in {
+        "in progress",
+        "in_progress",
+        "started",
+        "active",
+        "blocked",
+        "at risk",
+        "delayed",
+        "on track",
+    }:
+        return STATUS_IN_PROGRESS
+    return STATUS_IN_PROGRESS
+
+
+def _derive_objective_status_from_krs(kr_statuses: list[str]) -> str:
+    normalized: list[str] = []
+    for raw in kr_statuses:
+        status = _normalize_status(raw)
+        if status is not None:
+            normalized.append(status)
+    if not normalized:
+        return STATUS_NOT_STARTED
+    if all(s == STATUS_COMPLETED for s in normalized):
+        return STATUS_COMPLETED
+    if all(s == STATUS_NOT_STARTED for s in normalized):
+        return STATUS_NOT_STARTED
+    return STATUS_IN_PROGRESS
+
+
 def sync_from_notion(db: Session) -> dict[str, int]:
     total_start = perf_counter()
     objectives_db_id = os.getenv("NOTION_OBJECTIVES_DB_ID", "")
@@ -191,7 +231,7 @@ def sync_from_notion(db: Session) -> dict[str, int]:
             existing.owner = _prop_person_like(props, "Owner") or existing.owner
             existing.team = _prop_team(props) or existing.team
             existing.quarter = _prop_select(props, "Quarter") or existing.quarter
-            existing.status = _prop_select(props, "Status") or existing.status
+            existing.status = _normalize_status(_prop_select(props, "Status")) or existing.status
             existing.progress = _norm_progress(_prop_number(props, "Progress"))
             existing.target_date = _prop_first_nonempty(props, ["Target Date", "Due Date"], _prop_date)
             objective_map[notion_id] = existing
@@ -234,7 +274,7 @@ def sync_from_notion(db: Session) -> dict[str, int]:
             existing.owner = _prop_person_like(props, "Owner") or existing.owner
             existing.team = _prop_team(props) or existing.team
             existing.risk = _prop_select(props, "Risk") or existing.risk
-            existing.status = _prop_select(props, "Status") or existing.status
+            existing.status = _normalize_status(_prop_select(props, "Status")) or existing.status
             existing.progress = _norm_progress(_prop_number(props, "Progress"))
             existing.deadline = _prop_first_nonempty(props, ["Deadline", "Due Date"], _prop_date)
             existing.last_update = _prop_date(props, "Last Update") or existing.last_update
@@ -248,6 +288,13 @@ def sync_from_notion(db: Session) -> dict[str, int]:
     # This avoids stale-row errors when bulk deletes run in the same transaction.
     with _timed_step("Flush key result changes"):
         db.flush()
+
+    with _timed_step("Derive objective status from key result statuses"):
+        objectives = db.query(Objective).all()
+        for objective in objectives:
+            objective.status = _derive_objective_status_from_krs(
+                [kr.status for kr in objective.key_results if kr.status]
+            )
 
     # Reconcile deletions:
     # If a row exists locally but is no longer present in Notion DB query results,

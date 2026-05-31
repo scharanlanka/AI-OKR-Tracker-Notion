@@ -158,7 +158,7 @@ class WriteAgent:
             owner=values.get("owner"),
             team=values.get("team"),
             quarter=values.get("quarter"),
-            status=values.get("status"),
+            status=None,
             progress=values.get("progress"),
         )
         return f"Created objective '{title}'. Notion page id: {created.get('id', 'unknown')}."
@@ -222,7 +222,7 @@ class WriteAgent:
                 owner=values.get("owner"),
                 team=values.get("team"),
                 quarter=values.get("quarter"),
-                status=values.get("status"),
+                status=None,
                 progress=values.get("progress"),
             )
             return f"Updated objective '{target.title}'. Notion page id: {updated.get('id', 'unknown')}."
