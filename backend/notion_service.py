@@ -126,10 +126,16 @@ def _prop_number(props: dict[str, Any], name: str) -> float:
 
 
 def _norm_progress(value: float) -> float:
-    # Store as 0..1 internally even if Notion keeps 0..100.
-    if value > 1:
-        return value / 100.0
-    return max(0.0, value)
+    # Percent field in Notion should be 0..1. Some legacy data was x100/x10000.
+    v = max(0.0, value)
+    while v > 1.0:
+        v /= 100.0
+    return v
+
+
+def _to_notion_progress(progress: float) -> float:
+    # Canonical outbound scale for Notion percent format: 0..1
+    return _norm_progress(progress)
 
 
 def _prop_date(props: dict[str, Any], name: str):
@@ -216,6 +222,8 @@ def sync_from_notion(db: Session) -> dict[str, int]:
     kr_notion_ids = {p["id"] for p in kr_pages}
 
     objective_map: dict[str, Objective] = {}
+    objective_progress_fixed = 0
+    key_result_progress_fixed = 0
     with _timed_step("Upsert objectives into local DB"):
         for page in objective_pages:
             props = page.get("properties", {})
@@ -232,7 +240,12 @@ def sync_from_notion(db: Session) -> dict[str, int]:
             existing.team = _prop_team(props) or existing.team
             existing.quarter = _prop_select(props, "Quarter") or existing.quarter
             existing.status = _normalize_status(_prop_select(props, "Status")) or existing.status
-            existing.progress = _norm_progress(_prop_number(props, "Progress"))
+            raw_progress = _prop_number(props, "Progress")
+            normalized_progress = _norm_progress(raw_progress)
+            existing.progress = normalized_progress
+            if abs(normalized_progress - raw_progress) > 1e-9:
+                update_objective_in_notion(notion_id=notion_id, progress=normalized_progress)
+                objective_progress_fixed += 1
             existing.target_date = _prop_first_nonempty(props, ["Target Date", "Due Date"], _prop_date)
             objective_map[notion_id] = existing
 
@@ -275,7 +288,12 @@ def sync_from_notion(db: Session) -> dict[str, int]:
             existing.team = _prop_team(props) or existing.team
             existing.risk = _prop_select(props, "Risk") or existing.risk
             existing.status = _normalize_status(_prop_select(props, "Status")) or existing.status
-            existing.progress = _norm_progress(_prop_number(props, "Progress"))
+            raw_progress = _prop_number(props, "Progress")
+            normalized_progress = _norm_progress(raw_progress)
+            existing.progress = normalized_progress
+            if abs(normalized_progress - raw_progress) > 1e-9:
+                update_key_result_in_notion(notion_id=notion_id, progress=normalized_progress)
+                key_result_progress_fixed += 1
             existing.deadline = _prop_first_nonempty(props, ["Deadline", "Due Date"], _prop_date)
             existing.last_update = _prop_date(props, "Last Update") or existing.last_update
             blocker_text = _prop_first_nonempty(props, ["Blocker", "Blocker Notes"], _prop_text) or ""
@@ -313,6 +331,8 @@ def sync_from_notion(db: Session) -> dict[str, int]:
         "objectives_synced": len(objective_pages),
         "key_results_synced": len(kr_pages),
         "key_results_skipped_without_objective": skipped_kr_without_objective,
+        "objective_progress_fixed": objective_progress_fixed,
+        "key_result_progress_fixed": key_result_progress_fixed,
     }
 
 
@@ -357,7 +377,7 @@ def create_objective_in_notion(
     if status:
         properties["Status"] = _build_select(status)
     if progress is not None:
-        properties["Progress"] = {"number": progress}
+        properties["Progress"] = {"number": _to_notion_progress(progress)}
 
     payload = {
         "parent": {"database_id": objectives_db_id},
@@ -398,7 +418,7 @@ def create_key_result_in_notion(
     if deadline:
         properties["Due Date"] = {"date": {"start": deadline}}
     if progress is not None:
-        properties["Progress"] = {"number": progress * 100.0}
+        properties["Progress"] = {"number": _to_notion_progress(progress)}
     payload = {
         "parent": {"database_id": kr_db_id},
         "properties": {k: v for k, v in properties.items() if v is not None},
@@ -430,7 +450,7 @@ def update_objective_in_notion(
     if status is not None:
         properties["Status"] = _build_select(status)
     if progress is not None:
-        properties["Progress"] = {"number": progress}
+        properties["Progress"] = {"number": _to_notion_progress(progress)}
 
     payload = {"properties": properties}
     resp = requests.patch(url, json=payload, headers=_headers(), timeout=20)
@@ -465,7 +485,7 @@ def update_key_result_in_notion(
     if deadline is not None:
         properties["Due Date"] = {"date": {"start": deadline}} if deadline else {"date": None}
     if progress is not None:
-        properties["Progress"] = {"number": progress * 100.0}
+        properties["Progress"] = {"number": _to_notion_progress(progress)}
     if objective_notion_id is not None:
         properties["Objective"] = {"relation": [{"id": objective_notion_id}]}
     if blocker_notes is not None:
