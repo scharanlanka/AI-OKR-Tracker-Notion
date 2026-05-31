@@ -48,6 +48,25 @@ export function AssistantWidget() {
     return () => clearInterval(id);
   }, [showSuggestions, suggestionPrompts.length]);
 
+  useEffect(() => {
+    if (!showSuggestions || suggestionPrompts.length <= 1) return;
+    if (suggestionIndex !== suggestionPrompts.length) return;
+
+    const id = setTimeout(() => {
+      // Jump from cloned first card back to real first card without visual flicker.
+      setSuggestionAnimate(false);
+      setSuggestionIndex(0);
+    }, 520);
+
+    return () => clearTimeout(id);
+  }, [showSuggestions, suggestionIndex, suggestionPrompts.length]);
+
+  useEffect(() => {
+    if (suggestionAnimate) return;
+    const id = requestAnimationFrame(() => setSuggestionAnimate(true));
+    return () => cancelAnimationFrame(id);
+  }, [suggestionAnimate]);
+
   async function sendMessage(text?: string) {
     const q = (text ?? input).trim().slice(0, MAX_INPUT_CHARS);
     if (!q || loading) return;
@@ -153,12 +172,6 @@ export function AssistantWidget() {
                   <div
                     className={`flex ${suggestionAnimate ? "transition-transform duration-500 ease-out" : ""}`}
                     style={{ transform: `translateX(-${suggestionIndex * 100}%)` }}
-                    onTransitionEnd={() => {
-                      if (suggestionIndex === suggestionPrompts.length) {
-                        setSuggestionAnimate(false);
-                        setSuggestionIndex(0);
-                      }
-                    }}
                   >
                     {suggestionLoop.map((q, idx) => (
                       <div key={`${q}-${idx}`} className="w-full shrink-0">
