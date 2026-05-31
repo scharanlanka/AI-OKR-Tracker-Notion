@@ -1,12 +1,16 @@
 from datetime import date, datetime
 import json
+import logging
 import re
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from llm import AzureLLMClient
 from models import KeyResult, Objective
+
+logger = logging.getLogger(__name__)
 
 
 class ReadAgent:
@@ -255,13 +259,26 @@ class ReadAgent:
         return sorted(rows, key=lambda r: (r.get(sort_by) is None, str(r.get(sort_by))), reverse=reverse)
 
     def run(self, question: str, db: Session) -> str:
+        logger.info("read_agent.run start question=%r", question)
+        query_start = perf_counter()
         kr_pairs = (
             db.query(KeyResult, Objective)
             .join(Objective, KeyResult.objective_id == Objective.id)
             .order_by(KeyResult.updated_at.desc())
             .all()
         )
+        logger.info(
+            "read_agent.db_query key_results_join_objectives rows=%s duration=%.3fs",
+            len(kr_pairs),
+            perf_counter() - query_start,
+        )
+        query_start = perf_counter()
         objectives = db.query(Objective).order_by(Objective.updated_at.desc()).all()
+        logger.info(
+            "read_agent.db_query objectives rows=%s duration=%.3fs",
+            len(objectives),
+            perf_counter() - query_start,
+        )
 
         objective_rows = self._to_objective_rows(objectives)
         kr_rows = self._to_kr_rows(kr_pairs)
@@ -353,19 +370,32 @@ class ReadAgent:
         return f"User question: {question}\n\nRetrieved context:\n{json.dumps(facts, indent=2)}"
 
     def run_stream(self, question: str, db: Session):
+        logger.info("read_agent.run_stream start question=%r", question)
         if not self.llm_client.is_enabled:
             yield self.run(question, db)
             return
 
         # Regenerate with stream so frontend can render token-by-token.
         # We recompute for parity with run() behavior.
+        query_start = perf_counter()
         kr_pairs = (
             db.query(KeyResult, Objective)
             .join(Objective, KeyResult.objective_id == Objective.id)
             .order_by(KeyResult.updated_at.desc())
             .all()
         )
+        logger.info(
+            "read_agent.db_query(stream) key_results_join_objectives rows=%s duration=%.3fs",
+            len(kr_pairs),
+            perf_counter() - query_start,
+        )
+        query_start = perf_counter()
         objectives = db.query(Objective).order_by(Objective.updated_at.desc()).all()
+        logger.info(
+            "read_agent.db_query(stream) objectives rows=%s duration=%.3fs",
+            len(objectives),
+            perf_counter() - query_start,
+        )
         objective_rows = self._to_objective_rows(objectives)
         kr_rows = self._to_kr_rows(kr_pairs)
         plan = self._infer_query_plan(question)

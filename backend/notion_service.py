@@ -1,6 +1,8 @@
 import logging
 import os
 from datetime import datetime
+from contextlib import contextmanager
+from time import perf_counter
 from typing import Any
 
 import requests
@@ -14,6 +16,16 @@ NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
 
 
+@contextmanager
+def _timed_step(step_name: str):
+    start = perf_counter()
+    logger.info("Starting step: %s", step_name)
+    try:
+        yield
+    finally:
+        logger.info("Completed step: %s in %.3fs", step_name, perf_counter() - start)
+
+
 def _headers() -> dict[str, str]:
     token = os.getenv("NOTION_TOKEN", "")
     return {
@@ -24,15 +36,25 @@ def _headers() -> dict[str, str]:
 
 
 def _query_database(database_id: str) -> list[dict[str, Any]]:
+    step_start = perf_counter()
     url = f"{NOTION_API_BASE}/databases/{database_id}/query"
     results: list[dict[str, Any]] = []
     next_cursor = None
+    page_count = 0
 
     while True:
+        page_count += 1
         payload = {"page_size": 100}
         if next_cursor:
             payload["start_cursor"] = next_cursor
+        request_start = perf_counter()
         resp = requests.post(url, json=payload, headers=_headers(), timeout=20)
+        logger.info(
+            "Notion query page %s for db %s took %.3fs",
+            page_count,
+            database_id,
+            perf_counter() - request_start,
+        )
         resp.raise_for_status()
         data = resp.json()
         results.extend(data.get("results", []))
@@ -40,6 +62,12 @@ def _query_database(database_id: str) -> list[dict[str, Any]]:
             break
         next_cursor = data.get("next_cursor")
 
+    logger.info(
+        "Fetched %s rows from db %s in %.3fs",
+        len(results),
+        database_id,
+        perf_counter() - step_start,
+    )
     return results
 
 
@@ -133,96 +161,106 @@ def _prop_first_nonempty(props: dict[str, Any], names: list[str], fn) -> Any:
 
 
 def sync_from_notion(db: Session) -> dict[str, int]:
+    total_start = perf_counter()
     objectives_db_id = os.getenv("NOTION_OBJECTIVES_DB_ID", "")
     key_results_db_id = os.getenv("NOTION_KEY_RESULTS_DB_ID", "")
 
     if not objectives_db_id or not key_results_db_id:
         raise ValueError("NOTION_OBJECTIVES_DB_ID and NOTION_KEY_RESULTS_DB_ID are required")
 
-    objective_pages = _query_database(objectives_db_id)
-    kr_pages = _query_database(key_results_db_id)
+    with _timed_step("Fetch objectives from Notion"):
+        objective_pages = _query_database(objectives_db_id)
+    with _timed_step("Fetch key results from Notion"):
+        kr_pages = _query_database(key_results_db_id)
     objective_notion_ids = {p["id"] for p in objective_pages}
     kr_notion_ids = {p["id"] for p in kr_pages}
 
     objective_map: dict[str, Objective] = {}
-    for page in objective_pages:
-        props = page.get("properties", {})
-        notion_id = page["id"]
-        title = _prop_text(props, "Objective") or _prop_text(props, "Name") or "Untitled Objective"
+    with _timed_step("Upsert objectives into local DB"):
+        for page in objective_pages:
+            props = page.get("properties", {})
+            notion_id = page["id"]
+            title = _prop_text(props, "Objective") or _prop_text(props, "Name") or "Untitled Objective"
 
-        existing = db.query(Objective).filter(Objective.notion_id == notion_id).first()
-        if not existing:
-            existing = Objective(notion_id=notion_id, title=title)
-            db.add(existing)
+            existing = db.query(Objective).filter(Objective.notion_id == notion_id).first()
+            if not existing:
+                existing = Objective(notion_id=notion_id, title=title)
+                db.add(existing)
 
-        existing.title = title
-        existing.owner = _prop_person_like(props, "Owner") or existing.owner
-        existing.team = _prop_team(props) or existing.team
-        existing.quarter = _prop_select(props, "Quarter") or existing.quarter
-        existing.status = _prop_select(props, "Status") or existing.status
-        existing.progress = _norm_progress(_prop_number(props, "Progress"))
-        existing.target_date = _prop_first_nonempty(props, ["Target Date", "Due Date"], _prop_date)
-        objective_map[notion_id] = existing
+            existing.title = title
+            existing.owner = _prop_person_like(props, "Owner") or existing.owner
+            existing.team = _prop_team(props) or existing.team
+            existing.quarter = _prop_select(props, "Quarter") or existing.quarter
+            existing.status = _prop_select(props, "Status") or existing.status
+            existing.progress = _norm_progress(_prop_number(props, "Progress"))
+            existing.target_date = _prop_first_nonempty(props, ["Target Date", "Due Date"], _prop_date)
+            objective_map[notion_id] = existing
 
-    db.flush()
+    with _timed_step("Flush objective changes"):
+        db.flush()
 
     skipped_kr_without_objective = 0
 
-    for page in kr_pages:
-        props = page.get("properties", {})
-        notion_id = page["id"]
-        title = _prop_text(props, "Key Result") or _prop_text(props, "Name") or "Untitled KR"
+    with _timed_step("Upsert key results into local DB"):
+        for page in kr_pages:
+            props = page.get("properties", {})
+            notion_id = page["id"]
+            title = _prop_text(props, "Key Result") or _prop_text(props, "Name") or "Untitled KR"
 
-        objective_id = None
-        objective_relation = props.get("Objective", {}).get("relation", [])
-        if objective_relation:
-            rel_id = objective_relation[0].get("id")
-            rel_obj = objective_map.get(rel_id)
-            if rel_obj:
-                objective_id = rel_obj.id
+            objective_id = None
+            objective_relation = props.get("Objective", {}).get("relation", [])
+            if objective_relation:
+                rel_id = objective_relation[0].get("id")
+                rel_obj = objective_map.get(rel_id)
+                if rel_obj:
+                    objective_id = rel_obj.id
 
-        existing = db.query(KeyResult).filter(KeyResult.notion_id == notion_id).first()
-        if not existing:
-            if objective_id is None:
-                logger.warning("Skipping new KR with no objective mapping: %s", title)
+            existing = db.query(KeyResult).filter(KeyResult.notion_id == notion_id).first()
+            if not existing:
+                if objective_id is None:
+                    logger.warning("Skipping new KR with no objective mapping: %s", title)
+                    skipped_kr_without_objective += 1
+                    continue
+                existing = KeyResult(notion_id=notion_id, objective_id=objective_id, title=title)
+                db.add(existing)
+            elif objective_id is None:
+                # Strict mode: keep existing row unchanged when relation is missing.
+                logger.warning("Skipping KR update due to missing objective relation: %s", title)
                 skipped_kr_without_objective += 1
                 continue
-            existing = KeyResult(notion_id=notion_id, objective_id=objective_id, title=title)
-            db.add(existing)
-        elif objective_id is None:
-            # Strict mode: keep existing row unchanged when relation is missing.
-            logger.warning("Skipping KR update due to missing objective relation: %s", title)
-            skipped_kr_without_objective += 1
-            continue
 
-        existing.objective_id = objective_id
-        existing.title = title
-        existing.owner = _prop_person_like(props, "Owner") or existing.owner
-        existing.team = _prop_team(props) or existing.team
-        existing.risk = _prop_select(props, "Risk") or existing.risk
-        existing.status = _prop_select(props, "Status") or existing.status
-        existing.progress = _norm_progress(_prop_number(props, "Progress"))
-        existing.deadline = _prop_first_nonempty(props, ["Deadline", "Due Date"], _prop_date)
-        existing.last_update = _prop_date(props, "Last Update") or existing.last_update
-        blocker_text = _prop_first_nonempty(props, ["Blocker", "Blocker Notes"], _prop_text) or ""
-        existing.blocker_notes = blocker_text or existing.blocker_notes
-        status_lower = (existing.status or "").lower()
-        checkbox_blocked = bool(props.get("Blocked", {}).get("checkbox", False))
-        existing.is_blocked = checkbox_blocked or ("blocked" in status_lower) or bool(blocker_text.strip())
+            existing.objective_id = objective_id
+            existing.title = title
+            existing.owner = _prop_person_like(props, "Owner") or existing.owner
+            existing.team = _prop_team(props) or existing.team
+            existing.risk = _prop_select(props, "Risk") or existing.risk
+            existing.status = _prop_select(props, "Status") or existing.status
+            existing.progress = _norm_progress(_prop_number(props, "Progress"))
+            existing.deadline = _prop_first_nonempty(props, ["Deadline", "Due Date"], _prop_date)
+            existing.last_update = _prop_date(props, "Last Update") or existing.last_update
+            blocker_text = _prop_first_nonempty(props, ["Blocker", "Blocker Notes"], _prop_text) or ""
+            existing.blocker_notes = blocker_text or existing.blocker_notes
+            status_lower = (existing.status or "").lower()
+            checkbox_blocked = bool(props.get("Blocked", {}).get("checkbox", False))
+            existing.is_blocked = checkbox_blocked or ("blocked" in status_lower) or bool(blocker_text.strip())
 
     # Flush ORM updates/inserts before running bulk reconciliation deletes.
     # This avoids stale-row errors when bulk deletes run in the same transaction.
-    db.flush()
+    with _timed_step("Flush key result changes"):
+        db.flush()
 
     # Reconcile deletions:
     # If a row exists locally but is no longer present in Notion DB query results,
     # remove it so dashboard reflects Notion as source of truth.
-    if kr_notion_ids:
-        db.query(KeyResult).filter(~KeyResult.notion_id.in_(kr_notion_ids)).delete(synchronize_session=False)
-    if objective_notion_ids:
-        db.query(Objective).filter(~Objective.notion_id.in_(objective_notion_ids)).delete(synchronize_session=False)
+    with _timed_step("Reconcile local deletions"):
+        if kr_notion_ids:
+            db.query(KeyResult).filter(~KeyResult.notion_id.in_(kr_notion_ids)).delete(synchronize_session=False)
+        if objective_notion_ids:
+            db.query(Objective).filter(~Objective.notion_id.in_(objective_notion_ids)).delete(synchronize_session=False)
 
-    db.commit()
+    with _timed_step("Commit sync transaction"):
+        db.commit()
+    logger.info("sync_from_notion total duration: %.3fs", perf_counter() - total_start)
 
     return {
         "objectives_synced": len(objective_pages),

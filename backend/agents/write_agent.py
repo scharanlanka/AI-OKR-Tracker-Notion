@@ -1,5 +1,7 @@
 from datetime import date, datetime, timedelta
 import json
+import logging
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -13,6 +15,8 @@ from notion_service import (
     update_key_result_in_notion,
     update_objective_in_notion,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class WriteAgent:
@@ -108,6 +112,7 @@ class WriteAgent:
         return plan
 
     def _match_objectives(self, db: Session, filters: dict[str, Any]) -> list[Objective]:
+        start = perf_counter()
         q = db.query(Objective)
         if filters.get("title"):
             q = q.filter(Objective.title.ilike(f"%{filters['title']}%"))
@@ -115,9 +120,17 @@ class WriteAgent:
             q = q.filter(Objective.owner.ilike(f"%{filters['owner']}%"))
         if filters.get("team"):
             q = q.filter(Objective.team.ilike(f"%{filters['team']}%"))
-        return q.order_by(Objective.updated_at.desc()).all()
+        rows = q.order_by(Objective.updated_at.desc()).all()
+        logger.info(
+            "write_agent.db_query objectives filters=%s rows=%s duration=%.3fs",
+            filters,
+            len(rows),
+            perf_counter() - start,
+        )
+        return rows
 
     def _match_key_results(self, db: Session, filters: dict[str, Any]) -> list[tuple[KeyResult, Objective]]:
+        start = perf_counter()
         q = db.query(KeyResult, Objective).join(Objective, KeyResult.objective_id == Objective.id)
         if filters.get("title"):
             q = q.filter(KeyResult.title.ilike(f"%{filters['title']}%"))
@@ -127,7 +140,14 @@ class WriteAgent:
             q = q.filter(KeyResult.owner.ilike(f"%{filters['owner']}%"))
         if filters.get("team"):
             q = q.filter(KeyResult.team.ilike(f"%{filters['team']}%"))
-        return q.order_by(KeyResult.updated_at.desc()).all()
+        rows = q.order_by(KeyResult.updated_at.desc()).all()
+        logger.info(
+            "write_agent.db_query key_results_join_objectives filters=%s rows=%s duration=%.3fs",
+            filters,
+            len(rows),
+            perf_counter() - start,
+        )
+        return rows
 
     def _create_objective(self, values: dict[str, Any]) -> str:
         title = values.get("title")
@@ -175,7 +195,9 @@ class WriteAgent:
         )
 
     def run(self, question: str, db: Session) -> str:
+        logger.info("write_agent.run start question=%r", question)
         plan = self._infer_write_plan(question)
+        logger.info("write_agent.plan entity=%s action=%s filters=%s", plan["entity"], plan["action"], plan.get("target_filters", {}))
         entity = plan["entity"]
         action = plan["action"]
         filters = plan.get("target_filters", {})

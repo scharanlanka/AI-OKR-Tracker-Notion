@@ -1,12 +1,17 @@
 import os
 import random
 import requests
+import logging
+from time import perf_counter
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from faker import Faker
 
 load_dotenv()
 fake = Faker()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 PARENT_PAGE_ID = os.getenv("NOTION_PARENT_PAGE_ID")
@@ -20,13 +25,25 @@ HEADERS = {
 }
 
 
+@contextmanager
+def timed_step(step_name):
+    start = perf_counter()
+    logger.info("Starting step: %s", step_name)
+    try:
+        yield
+    finally:
+        logger.info("Completed step: %s in %.3fs", step_name, perf_counter() - start)
+
+
 def request(method, endpoint, payload=None):
+    start = perf_counter()
     res = requests.request(
         method,
         f"{BASE_URL}{endpoint}",
         headers=HEADERS,
         json=payload
     )
+    logger.info("Notion API %s %s took %.3fs", method, endpoint, perf_counter() - start)
 
     if not res.ok:
         print("STATUS:", res.status_code)
@@ -166,60 +183,68 @@ blockers = [
 
 
 def main():
-    objectives_db_id = create_database("Objectives", objective_db_schema)
-    key_results_db_id = create_database("Key Results", key_result_db_schema)
-    update_database(
-        key_results_db_id,
-        {
-            "Objective": {
-                "relation": {
-                    "database_id": objectives_db_id,
-                    "type": "single_property",
-                    "single_property": {}
+    total_start = perf_counter()
+    with timed_step("Create Objectives database"):
+        objectives_db_id = create_database("Objectives", objective_db_schema)
+    with timed_step("Create Key Results database"):
+        key_results_db_id = create_database("Key Results", key_result_db_schema)
+    with timed_step("Link Key Results to Objectives relation"):
+        update_database(
+            key_results_db_id,
+            {
+                "Objective": {
+                    "relation": {
+                        "database_id": objectives_db_id,
+                        "type": "single_property",
+                        "single_property": {}
+                    }
                 }
-            }
-        },
-    )
+            },
+        )
 
     objective_page_ids = {}
-    for obj in objectives:
-        team = random.choice(teams)
-        owner = fake.name()
-        status = random.choice(statuses)
+    with timed_step("Create objective and key result rows"):
+        for obj in objectives:
+            obj_start = perf_counter()
+            team = random.choice(teams)
+            owner = fake.name()
+            status = random.choice(statuses)
 
-        page_id = create_row(objectives_db_id, {
-            "Objective": title(obj),
-            "Team": select(team),
-            "Owner": rich_text(owner),
-            "Quarter": select("Q2"),
-            "Status": select(status),
-        })
-        objective_page_ids[obj] = page_id
-
-        for i in range(1, 4):
-            progress = random.choice([0.10, 0.25, 0.45, 0.60, 0.80, 1.00])
-            due_date = datetime.today() + timedelta(days=random.randint(-7, 45))
-            last_update = datetime.today() - timedelta(days=random.randint(1, 15))
-            blocker = random.choice(blockers)
-
-            create_row(key_results_db_id, {
-                "Key Result": title(f"{obj} - KR {i}"),
+            page_id = create_row(objectives_db_id, {
+                "Objective": title(obj),
                 "Team": select(team),
                 "Owner": rich_text(owner),
-                "Progress": number(progress),
-                "Due Date": date(due_date),
-                "Status": select("Blocked" if blocker else status),
-                "Risk": select(random.choice(risks)),
-                "Blocker": rich_text(blocker),
-                "Last Update": date(last_update),
-                "Objective": {
-                    "relation": [{"id": objective_page_ids[obj]}]
-                },
+                "Quarter": select("Q2"),
+                "Status": select(status),
             })
+            objective_page_ids[obj] = page_id
+
+            for i in range(1, 4):
+                progress = random.choice([0.10, 0.25, 0.45, 0.60, 0.80, 1.00])
+                due_date = datetime.today() + timedelta(days=random.randint(-7, 45))
+                last_update = datetime.today() - timedelta(days=random.randint(1, 15))
+                blocker = random.choice(blockers)
+
+                create_row(key_results_db_id, {
+                    "Key Result": title(f"{obj} - KR {i}"),
+                    "Team": select(team),
+                    "Owner": rich_text(owner),
+                    "Progress": number(progress),
+                    "Due Date": date(due_date),
+                    "Status": select("Blocked" if blocker else status),
+                    "Risk": select(random.choice(risks)),
+                    "Blocker": rich_text(blocker),
+                    "Last Update": date(last_update),
+                    "Objective": {
+                        "relation": [{"id": objective_page_ids[obj]}]
+                    },
+                })
+            logger.info("Finished objective '%s' in %.3fs", obj, perf_counter() - obj_start)
 
     print("\nDone.")
     print("Objectives DB:", objectives_db_id)
     print("Key Results DB:", key_results_db_id)
+    logger.info("Workspace creation total time: %.3fs", perf_counter() - total_start)
 
 
 if __name__ == "__main__":

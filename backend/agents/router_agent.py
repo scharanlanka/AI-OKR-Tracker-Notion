@@ -1,4 +1,8 @@
+import logging
+
 from llm import AzureLLMClient
+
+logger = logging.getLogger(__name__)
 
 
 class RouterAgent:
@@ -21,6 +25,7 @@ class RouterAgent:
             )
             token = (out or "").strip().lower()
             if token in {"read_agent", "write_agent"}:
+                logger.info("router_agent selected route=%s source=llm", token)
                 return token
 
         # Fallback only when LLM routing is unavailable or returns invalid output.
@@ -28,5 +33,7 @@ class RouterAgent:
         q = question.lower()
         write_keywords = ["create", "add", "update", "edit", "modify", "delete", "remove"]
         if any(k in q for k in write_keywords):
+            logger.info("router_agent selected route=write_agent source=fallback")
             return "write_agent"
+        logger.info("router_agent selected route=read_agent source=fallback")
         return "read_agent"
