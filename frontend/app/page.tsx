@@ -52,7 +52,7 @@ export default function HomePage() {
       <div className="mx-auto max-w-[1800px] space-y-6 px-4 py-6 sm:px-6 sm:py-8">
         <section>
           <h2 className="text-3xl font-semibold sm:text-4xl">OKR overview</h2>
-          <p className="mt-1.5 text-sm text-muted">Quarterly progress, risks, and deadlines across teams — synced from Notion.</p>
+          <p className="mt-1.5 text-sm text-muted">Quarterly progress, risks, and deadlines across teams, synced from Notion.</p>
         </section>
 
         {loading ? (

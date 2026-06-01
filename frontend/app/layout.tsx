@@ -2,8 +2,8 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Qualified OKR Tracker",
-  description: "Mission control for objectives, key results, and AI assistance",
+  title: "PULSE",
+  description: "OKR Intelligence for Qualified Health PBC",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
