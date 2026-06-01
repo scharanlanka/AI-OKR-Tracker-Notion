@@ -27,7 +27,7 @@ export function DashboardHeader({
           </div>
           <div>
             <h1 className="text-base font-semibold leading-none">PULSE</h1>
-            <p className="mt-1 text-xs tracking-[0.22em] text-muted">OKR Intelligence for Qualified Health PBC</p>
+            <p className="mt-1 text-xs tracking-[0.22em] text-muted">OKR Intelligence for Qualified Health</p>
           </div>
         </div>
 
