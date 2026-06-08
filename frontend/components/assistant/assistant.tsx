@@ -19,7 +19,7 @@ export function AssistantWidget() {
     {
       id: "welcome",
       role: "assistant",
-      text: "Hi, I'm your PULSE assistant. Ask about progress, risks, deadlines, owners, teams, blockers, or status.",
+      text: "Hi, I'm your dashboard assistant. Ask about progress, risks, deadlines, owners, teams, blockers, or status.",
       agent: "router",
     },
   ]);
@@ -128,7 +128,7 @@ export function AssistantWidget() {
         <button
           onClick={() => setOpen(true)}
           className="relative grid h-12 w-12 place-items-center rounded-full bg-primary text-white shadow-soft sm:h-14 sm:w-14"
-          aria-label="Open PULSE Assistant"
+          aria-label="Open Dashboard Assistant"
         >
           <span className="pointer-events-none absolute -inset-1 rounded-full border border-primary/50 animate-pulse" />
           <span className="pointer-events-none absolute -inset-3 rounded-full border border-primary/25 animate-ping" />
@@ -143,7 +143,7 @@ export function AssistantWidget() {
               <div className="flex items-center gap-3">
                 <div className="grid h-11 w-11 place-items-center rounded-full bg-primary/20 text-primary"><Bot /></div>
                 <div>
-                  <div className="text-lg font-semibold">PULSE Assistant</div>
+                  <div className="text-lg font-semibold">Dashboard Assistant</div>
                   <div className="flex items-center gap-2 text-sm text-muted">
                     <span className="relative inline-flex h-2.5 w-2.5">
                       <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/70" />

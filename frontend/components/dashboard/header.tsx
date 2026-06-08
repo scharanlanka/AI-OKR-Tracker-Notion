@@ -1,5 +1,4 @@
 import { RefreshCw } from "lucide-react";
-import Image from "next/image";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 export function DashboardHeader({
@@ -16,18 +15,11 @@ export function DashboardHeader({
       <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:py-5">
         <div className="flex items-center gap-4">
           <div className="grid h-12 w-12 place-items-center overflow-hidden rounded-2xl border border-primary/25 bg-card shadow-soft dark:border-primary/45 dark:bg-white/95">
-            <Image
-              src="/Assets/Qualified Logo.png"
-              alt="Qualified logo"
-              width={42}
-              height={42}
-              className="h-10 w-10 object-contain"
-              priority
-            />
+            <span className="text-sm font-semibold tracking-[0.22em] text-primary">OKR</span>
           </div>
           <div>
-            <h1 className="text-base font-semibold leading-none">PULSE</h1>
-            <p className="mt-1 text-xs tracking-[0.22em] text-muted">OKR Intelligence for Qualified Health</p>
+            <h1 className="text-base font-semibold leading-none">OKR Tracker</h1>
+            <p className="mt-1 text-xs tracking-[0.22em] text-muted">Progress intelligence dashboard</p>
           </div>
         </div>
 
